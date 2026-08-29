@@ -75,15 +75,20 @@ python3 -m pip install --upgrade "git+https://github.com/zmk5566/coool-cool-late
 
 升级后重启正在运行的编辑器进程。应用不会在后台自动更新自身。
 
-## 在 Codex 中使用 / Use with Codex
+## 在 Codex CLI 中使用 / Use with Codex CLI
 
-仓库自带一个 Codex skill。可以让 Codex 用 `$skill-installer` 从 GitHub 安装：
+仓库自带一个 Codex skill。最简单的安装方式是：
 
-```text
-$skill-installer install https://github.com/zmk5566/coool-cool-latex-editor/tree/main/skills/cool-cool-latex-editor
-```
+1. 在终端运行 `codex`，进入 Codex CLI。
+2. 把下面这句话输入 **Codex 的对话提示符**，不要把它当作 shell 命令：
 
-重启 Codex 后，可以直接说：
+   ```text
+   $skill-installer install https://github.com/zmk5566/coool-cool-latex-editor/tree/main/skills/cool-cool-latex-editor
+   ```
+
+3. Codex 通常会自动发现新 skill；如果 `$cool-cool-latex-editor` 没有出现，退出并重新启动 Codex CLI。
+
+安装完成后，可以直接说：
 
 ```text
 用 cool cool latex editor 打开 draft/proposal.tex，端口用 52732。
@@ -96,6 +101,24 @@ Use $cool-cool-latex-editor to open draft/proposal.tex.
 ```
 
 这个 skill 会告诉 Codex 如何定位 `.tex`、启动本地服务、检查版本，以及在你明确要求时执行对应的升级命令。安装和升级会改变本机环境，因此 Codex 仍会在需要时请求授权。
+
+### 手动安装 / Manual installation
+
+Codex CLI 也会从个人目录 `$HOME/.agents/skills` 读取 skill。如果已经 clone 了这个仓库，可以建立一个符号链接：
+
+```bash
+mkdir -p "$HOME/.agents/skills"
+ln -s "/absolute/path/to/coool-cool-latex-editor/skills/cool-cool-latex-editor" \
+  "$HOME/.agents/skills/cool-cool-latex-editor"
+```
+
+这种方式下，更新仓库后 skill 也会同步更新：
+
+```bash
+git -C /absolute/path/to/coool-cool-latex-editor pull --ff-only
+```
+
+Codex 通常会自动检测 skill 文件变化；如果没有生效，重启 Codex CLI。
 
 ## Git 工作流 / Git workflow
 
