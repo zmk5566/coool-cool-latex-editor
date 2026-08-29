@@ -8,6 +8,8 @@
 
 - 把 LaTeX 渲染成居中的文章视图，而不是 IDE 或 PDF 阅读器。
 - 递归读取静态 `\\input{...}` 和 `\\include{...}`，包括被引用文件继续引用的更深层文件。
+- 在文章视图中保留论文标题，并明确显示 “Abstract” 标题。
+- 把 BibTeX citation 显示为受保护的作者–年份标签，悬停可查看完整条目，同时原样保留 `\\cite{...}` 源码。
 - 点击段落即可小范围修改，同时保护公式、强调、链接等 LaTeX 结构。
 - 选中文字可以添加段落评论、全文评论和仅供编辑使用的高亮。
 - 评论与高亮以 TeX comment 保存，因此不会进入正常的 LaTeX 或 PDF 输出。
@@ -56,7 +58,7 @@ cool-cool-latex-editor draft/proposal.tex --port 0 --open
 
 编辑器会自动寻找 `.tex` 文件所在的 Git 仓库。只有自动发现不合适时才需要使用 `--root /path/to/repository`。
 
-多文件文章应传入主入口文件。页面顶部会显示已经载入的源文件数量；悬停可以查看文件路径和未解析引用警告。文章视图中的编辑、评论和高亮会写回所选段落真正所在的引用文件。**Source** 模式则有意只编辑主入口文件。
+多文件文章应传入主入口文件。页面顶部会显示已经载入的源文件数量；悬停可以查看文件路径和未解析引用警告。文章视图中的编辑、评论和高亮会写回所选段落真正所在的引用文件。**Source** 模式则有意只编辑主入口文件。`\\bibliography{...}` 或 `\\addbibresource{...}` 指向的 BibTeX 文件会作为显示依赖被监测；修改它会刷新 citation 标签，但不会计入 LaTeX 源文件数量。
 
 查看当前安装版本：
 
@@ -148,4 +150,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-当前版本：`0.2.0`
+当前版本：`0.2.1`

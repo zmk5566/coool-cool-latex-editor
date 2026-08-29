@@ -128,6 +128,85 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(article["warnings"], [])
         self.assertEqual(article["blocks"][4]["source_path"], "figures/deep.tex")
 
+    def test_project_renders_title_abstract_and_bibliography_citations(self):
+        sections = self.root / "sections"
+        sections.mkdir()
+        abstract = sections / "abstract.tex"
+        bibliography = self.root / "references.bib"
+        self.document.write_text(
+            "\\documentclass{article}\n"
+            "\\newcommand{\\sysname}{\\textsc{HexBlocks}\\xspace}\n"
+            "\\title{\\sysname: Connected authoring}\n"
+            "\\begin{document}\n"
+            "\\input{sections/abstract}\n"
+            "\\bibliography{references}\n"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+        abstract.write_text(
+            "\\begin{abstract}\n"
+            "Prior work matters~\\cite{greenberg2001phidgets}.\n"
+            "\\end{abstract}\n",
+            encoding="utf-8",
+        )
+        bibliography.write_text(
+            "@inproceedings{greenberg2001phidgets,\n"
+            "  author={Greenberg, Saul and Fitchett, Chester},\n"
+            "  title={Phidgets},\n"
+            "  year={2001}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+        article = self.request("/api/article")
+
+        self.assertEqual(
+            [block["kind"] for block in article["blocks"]],
+            ["title", "abstract-heading", "paragraph"],
+        )
+        self.assertEqual(
+            "".join(run["text"] for run in article["blocks"][0]["runs"]),
+            "HexBlocks: Connected authoring",
+        )
+        citation = next(
+            run
+            for run in article["blocks"][2]["runs"]
+            if run.get("kind") == "citation"
+        )
+        self.assertEqual(citation["text"], "(Greenberg & Fitchett, 2001)")
+        self.assertIn("Phidgets", citation["tooltip"])
+        self.assertEqual(len(article["sources"]), 2)
+
+        paragraph = article["blocks"][2]
+        segments = [
+            {"type": "token", "index": run["index"]}
+            if run["type"] == "token"
+            else {"type": "text", "value": run["text"]}
+            for run in paragraph["runs"]
+        ]
+        saved = self.request(
+            "/api/article/block",
+            method="PUT",
+            payload={
+                "block_id": paragraph["id"],
+                "segments": segments,
+                "expected_hash": article["hash"],
+            },
+        )
+        self.assertIn(
+            "\\cite{greenberg2001phidgets}", abstract.read_text(encoding="utf-8")
+        )
+        self.assertNotIn("\\textbackslash{}cite", abstract.read_text(encoding="utf-8"))
+
+        initial_hash = saved["hash"]
+        bibliography.write_text(
+            bibliography.read_text(encoding="utf-8").replace("2001", "2002"),
+            encoding="utf-8",
+        )
+        status = self.request("/api/status")
+        self.assertNotEqual(status["hash"], initial_hash)
+        self.assertEqual(status["source_count"], 2)
+
     def test_recursive_article_edit_writes_to_the_origin_file(self):
         _included, nested = self.write_multifile_document()
         root_before = self.document.read_text(encoding="utf-8")

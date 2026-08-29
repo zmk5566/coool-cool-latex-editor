@@ -40,10 +40,12 @@ Prefer `pipx`; use a project virtual environment or ordinary `pip` only when tha
 - The browser view is an intermediate representation; the `.tex` file remains authoritative.
 - In a multi-file project, each article block retains its source path. Paragraph edits, inline comments, and highlights write back to that file; overall comments belong to the main entry file.
 - Paragraph edits preserve protected LaTeX tokens. Structural edits belong in **Source** mode.
+- The article view keeps the document title and an explicit **Abstract** heading. BibTeX citations are protected tokens: they display as author-year labels with reference details on hover, while saves preserve the original `\\cite{...}` command.
 - **Source** mode edits only the main entry file. Use the article view for focused changes in included files.
 - Passage comments, overall comments, anchors, and highlights are stored as TeX comments and do not render into normal PDF output.
 - **Reading** is quiet; **Bubbles** shows open discussions beside their text on wide screens.
 - External disk changes in any loaded source produce a reload prompt. Never discard unsaved browser edits on the user's behalf.
+- BibTeX files declared with `\\bibliography` or `\\addbibresource` are display dependencies and also trigger the external-change prompt.
 - Static references outside the repository and dynamic macro-generated include paths remain unresolved warnings; do not guess or silently read beyond the repository boundary.
 - Git identity is only a browser suggestion. The name chosen in the UI is copied into each annotation.
 

@@ -24,7 +24,7 @@ class CliTests(unittest.TestCase):
                 build_parser().parse_args(["--version"])
 
         self.assertEqual(exit_context.exception.code, 0)
-        stdout.write.assert_called_once_with("cool-cool-latex-editor 0.2.0\n")
+        stdout.write.assert_called_once_with("cool-cool-latex-editor 0.2.1\n")
 
     def test_document_is_positional_and_port_is_configurable(self):
         args = build_parser().parse_args(["draft/proposal.tex", "--port", "4188"])

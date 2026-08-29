@@ -13,6 +13,7 @@ from cool_cool_latex_editor.article import (
     update_article_block,
 )
 from cool_cool_latex_editor.comments import parse_comments, parse_highlights
+from cool_cool_latex_editor.bibliography import BibliographyEntry
 
 
 BS = chr(92)
@@ -47,6 +48,101 @@ SAMPLE = "\n".join(
 
 
 class ArticleTests(unittest.TestCase):
+    def test_keeps_document_title_abstract_label_and_readable_citations(self):
+        source = "\n".join(
+            [
+                BS + "documentclass{article}",
+                BS + "newcommand{" + BS + "sysname}{" + BS + "textsc{HexBlocks}" + BS + "xspace}",
+                BS + "title{" + BS + "sysname: A useful title}",
+                BS + "begin{document}",
+                BS + "maketitle",
+                BS + "begin{abstract}",
+                "An abstract with " + BS + "sysname and prior work~" + BS + "cite{greenberg2001phidgets}.",
+                BS + "end{abstract}",
+                BS + "end{document}",
+            ]
+        )
+        bibliography = {
+            "greenberg2001phidgets": BibliographyEntry(
+                key="greenberg2001phidgets",
+                author="Greenberg, Saul and Fitchett, Chester",
+                year="2001",
+                title="Phidgets",
+            )
+        }
+
+        blocks = parse_article(source, bibliography=bibliography)
+
+        self.assertEqual(
+            [block.kind for block in blocks],
+            ["title", "abstract-heading", "paragraph"],
+        )
+        self.assertEqual(
+            "".join(str(run["text"]) for run in blocks[0].runs),
+            "HexBlocks: A useful title",
+        )
+        self.assertFalse(blocks[1].public_dict()["editable"])
+        paragraph = blocks[2]
+        self.assertEqual([token.kind for token in paragraph.tokens], ["macro", "citation"])
+        citation = paragraph.tokens[1].public_dict()
+        self.assertEqual(citation["text"], "(Greenberg & Fitchett, 2001)")
+        self.assertIn("Phidgets", citation["tooltip"])
+
+        updated = update_article_block(
+            source,
+            paragraph.id,
+            [
+                {"type": "text", "value": "Revised with "},
+                {"type": "token", "index": 0},
+                {"type": "text", "value": " and "},
+                {"type": "token", "index": 1},
+                {"type": "text", "value": "."},
+            ],
+            bibliography=bibliography,
+        )
+        self.assertIn(BS + "sysname and " + BS + "cite{greenberg2001phidgets}", updated)
+
+    def test_recovers_a_citation_escaped_by_an_older_editor_version(self):
+        source = "\n".join(
+            [
+                BS + "documentclass{article}",
+                BS + "begin{document}",
+                "Prior work "
+                + BS
+                + "textbackslash{}cite"
+                + BS
+                + "{greenberg2001phidgets"
+                + BS
+                + "}.",
+                BS + "end{document}",
+            ]
+        )
+        bibliography = {
+            "greenberg2001phidgets": BibliographyEntry(
+                key="greenberg2001phidgets",
+                author="Greenberg, Saul and Fitchett, Chester",
+                year="2001",
+            )
+        }
+
+        paragraph = parse_article(source, bibliography=bibliography)[0]
+
+        self.assertEqual(paragraph.tokens[0].kind, "citation")
+        self.assertEqual(paragraph.tokens[0].source, BS + "cite{greenberg2001phidgets}")
+        self.assertIn("saving this paragraph repairs it", paragraph.tokens[0].tooltip)
+        updated = update_article_block(
+            source,
+            paragraph.id,
+            [
+                {"type": "text", "value": "Prior work "},
+                {"type": "token", "index": 0},
+                {"type": "text", "value": "."},
+            ],
+            bibliography=bibliography,
+        )
+        self.assertIn(BS + "cite{greenberg2001phidgets}", updated)
+        self.assertNotIn(BS + "textbackslash{}cite", updated)
+
     def test_parses_included_fragment_and_skips_non_prose_figure_source(self):
         fragment = "\n".join(
             [

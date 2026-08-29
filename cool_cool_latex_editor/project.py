@@ -10,8 +10,11 @@ from .article import (
     DOCUMENT_BEGIN_RE,
     DOCUMENT_END_RE,
     ArticleBlock,
+    extract_simple_macros,
     parse_article_range,
+    parse_document_title,
 )
+from .bibliography import BibliographyEntry, parse_bibtex
 from .comments import parse_comments, parse_highlights
 
 
@@ -19,6 +22,10 @@ INCLUDE_RE = re.compile(
     r"^[ \t]*\\(?P<command>input|include)\s*\{(?P<target>[^{}\r\n]+)\}"
     r"[ \t]*(?:%[^\n]*)?(?:\n|$)",
     re.MULTILINE,
+)
+BIBLIOGRAPHY_RE = re.compile(r"\\bibliography\s*\{(?P<targets>[^{}]+)\}")
+ADD_BIB_RESOURCE_RE = re.compile(
+    r"\\addbibresource(?:\[[^\]]*\])?\s*\{(?P<target>[^{}]+)\}"
 )
 MAX_INCLUDE_DEPTH = 64
 
@@ -59,6 +66,9 @@ class LatexProject:
     sources: Dict[str, ProjectSource] = field(default_factory=dict)
     blocks: List[ProjectBlock] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    bibliography_sources: Dict[str, ProjectSource] = field(default_factory=dict)
+    bibliography: Dict[str, BibliographyEntry] = field(default_factory=dict)
+    macros: Dict[str, str] = field(default_factory=dict)
     _block_map: Dict[str, ProjectBlock] = field(default_factory=dict)
     _target_map: Dict[Tuple[str, str], str] = field(default_factory=dict)
     _block_occurrences: Dict[Tuple[str, str], int] = field(default_factory=dict)
@@ -66,6 +76,11 @@ class LatexProject:
     @classmethod
     def load(cls, *, root: Path, document: Path) -> "LatexProject":
         project = cls(root=root.resolve(), document=document.resolve())
+        root_source = project._read_source(project.document)
+        if root_source is None:
+            raise ValueError("The main LaTeX file could not be read.")
+        project.macros = extract_simple_macros(root_source.content)
+        project._load_bibliographies(root_source)
         project._walk(project.document, is_root=True, stack=[])
         return project
 
@@ -78,11 +93,19 @@ class LatexProject:
             digest.update(b"\0")
             digest.update(source.content.encode("utf-8"))
             digest.update(b"\0")
+        for relative_path in sorted(self.bibliography_sources):
+            source = self.bibliography_sources[relative_path]
+            digest.update(b"bib\0")
+            digest.update(relative_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source.content.encode("utf-8"))
+            digest.update(b"\0")
         return digest.hexdigest()
 
     @property
     def modified_ns(self) -> int:
-        return max((source.modified_ns for source in self.sources.values()), default=0)
+        dependencies = [*self.sources.values(), *self.bibliography_sources.values()]
+        return max((source.modified_ns for source in dependencies), default=0)
 
     @property
     def root_source(self) -> ProjectSource:
@@ -177,6 +200,65 @@ class LatexProject:
         self.sources[relative_path] = source
         return source
 
+    def _resolve_bibliography(self, raw_target: str, source: ProjectSource) -> Optional[Path]:
+        target = raw_target.strip()
+        if not target or "\\" in target or "#" in target:
+            self.warnings.append(
+                f"Unsupported dynamic bibliography in {source.relative_path}: {raw_target}"
+            )
+            return None
+        raw_path = Path(target)
+        variants = [raw_path] if raw_path.suffix else [raw_path.with_suffix(".bib")]
+        checked: set[Path] = set()
+        for base in (self.document.parent, source.path.parent, self.root):
+            for variant in variants:
+                candidate = variant.resolve() if variant.is_absolute() else (base / variant).resolve()
+                if candidate in checked:
+                    continue
+                checked.add(candidate)
+                try:
+                    candidate.relative_to(self.root)
+                except ValueError:
+                    continue
+                if candidate.is_file():
+                    return candidate
+        self.warnings.append(
+            f"Bibliography file not found from {source.relative_path}: {target}"
+        )
+        return None
+
+    def _load_bibliography_source(self, path: Path) -> None:
+        relative_path = self._relative_path(path)
+        if relative_path in self.bibliography_sources:
+            return
+        try:
+            content = path.read_text(encoding="utf-8")
+            modified_ns = path.stat().st_mtime_ns
+        except (OSError, UnicodeError) as exc:
+            self.warnings.append(f"Could not read {relative_path}: {exc}")
+            return
+        source = ProjectSource(
+            path=path.resolve(),
+            relative_path=relative_path,
+            content=content,
+            modified_ns=modified_ns,
+        )
+        self.bibliography_sources[relative_path] = source
+        self.bibliography.update(parse_bibtex(content))
+
+    def _load_bibliographies(self, source: ProjectSource) -> None:
+        targets: List[str] = []
+        for match in BIBLIOGRAPHY_RE.finditer(source.content):
+            targets.extend(item.strip() for item in match.group("targets").split(","))
+        targets.extend(
+            match.group("target").strip()
+            for match in ADD_BIB_RESOURCE_RE.finditer(source.content)
+        )
+        for target in targets:
+            path = self._resolve_bibliography(target, source)
+            if path is not None:
+                self._load_bibliography_source(path)
+
     def _bounds(self, source: ProjectSource, *, is_root: bool) -> Tuple[int, int]:
         begin = DOCUMENT_BEGIN_RE.search(source.content)
         end = DOCUMENT_END_RE.search(source.content, begin.end() if begin else 0)
@@ -234,20 +316,29 @@ class LatexProject:
     def _fallback_target(self, relative_path: str, local_id: str) -> str:
         return f"{relative_path}::{local_id}"
 
+    def _append_block(self, source: ProjectSource, block: ArticleBlock) -> None:
+        key = (source.relative_path, block.id)
+        occurrence = self._block_occurrences.get(key, 0)
+        self._block_occurrences[key] = occurrence + 1
+        public_id = self._fallback_target(source.relative_path, block.id)
+        if occurrence:
+            public_id += f"::{occurrence + 1}"
+        wrapped = ProjectBlock(id=public_id, source=source, block=block)
+        self.blocks.append(wrapped)
+        self._block_map[public_id] = wrapped
+        self._target_map.setdefault(key, public_id)
+
     def _add_blocks(self, source: ProjectSource, start: int, end: int) -> None:
         if start >= end:
             return
-        for block in parse_article_range(source.content, start, end):
-            key = (source.relative_path, block.id)
-            occurrence = self._block_occurrences.get(key, 0)
-            self._block_occurrences[key] = occurrence + 1
-            public_id = self._fallback_target(source.relative_path, block.id)
-            if occurrence:
-                public_id += f"::{occurrence + 1}"
-            wrapped = ProjectBlock(id=public_id, source=source, block=block)
-            self.blocks.append(wrapped)
-            self._block_map[public_id] = wrapped
-            self._target_map.setdefault(key, public_id)
+        for block in parse_article_range(
+            source.content,
+            start,
+            end,
+            bibliography=self.bibliography,
+            macros=self.macros,
+        ):
+            self._append_block(source, block)
 
     def _walk(self, path: Path, *, is_root: bool, stack: List[Path]) -> None:
         resolved = path.resolve()
@@ -267,6 +358,14 @@ class LatexProject:
         source = self._read_source(resolved)
         if source is None:
             return
+        if is_root:
+            title = parse_document_title(
+                source.content,
+                bibliography=self.bibliography,
+                macros=self.macros,
+            )
+            if title:
+                self._append_block(source, title)
         start, end = self._bounds(source, is_root=is_root)
         cursor = start
         next_stack = [*stack, resolved]

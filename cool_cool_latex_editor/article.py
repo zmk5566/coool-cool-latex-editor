@@ -4,7 +4,9 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+from .bibliography import BibliographyEntry
 
 from .comments import (
     ANCHOR_RE,
@@ -32,11 +34,21 @@ SECTION_RE = re.compile(
     r"^\s*\\(?P<command>section|subsection|subsubsection|paragraph)"
     r"\*?\{(?P<content>.*)\}\s*$"
 )
+DOCUMENT_TITLE_RE = re.compile(r"\\title\s*\{")
+ABSTRACT_BEGIN_RE = re.compile(r"^\s*\\begin\{abstract\}\s*$")
 TITLE_RE = re.compile(r"^\s*\{\\Large\\bfseries\s+(?P<content>.*?)\}\\par\s*$")
 SUBTITLE_RE = re.compile(r"^\s*\{\\large\s+(?P<content>.*?)\}\\par\s*$")
 LIST_ITEM_RE = re.compile(r"^\s*\\item\s+(?P<content>.*)$")
 INLINE_TOKEN_RE = re.compile(
-    r"(?<!\\)\$|\\(?:emph|textbf|url)\{|\\judgment(?:\{\})?"
+    r"(?<!\\)\$|\\(?:emph|textbf|url)\{|\\judgment(?:\{\})?|"
+    r"\\textbackslash\{\}(?:cite|citep|citet|citeauthor|citeyear|parencite|textcite|autocite)"
+    r"\s*\\\{[^{}]*\\\}|"
+    r"\\(?:cite|citep|citet|citeauthor|citeyear|parencite|textcite|autocite)"
+    r"(?:\s*\[[^\]]*\])*\s*\{"
+)
+MACRO_DEFINITION_RE = re.compile(
+    r"\\(?:newcommand|renewcommand)\s*\{\\(?P<name>[A-Za-z@]+)\}\s*"
+    r"(?:\[(?P<arguments>\d+)\])?\s*\{"
 )
 
 
@@ -46,9 +58,20 @@ class ArticleToken:
     source: str
     text: str
     kind: str
+    tooltip: Optional[str] = None
+    unresolved: bool = False
 
     def public_dict(self) -> Dict[str, object]:
-        return {"index": self.index, "text": self.text, "kind": self.kind}
+        result: Dict[str, object] = {
+            "index": self.index,
+            "text": self.text,
+            "kind": self.kind,
+        }
+        if self.tooltip:
+            result["tooltip"] = self.tooltip
+        if self.unresolved:
+            result["unresolved"] = True
+        return result
 
 
 @dataclass
@@ -129,6 +152,36 @@ def latex_text(value: str) -> str:
     return text
 
 
+def _macro_preview(value: str) -> str:
+    text = value.replace(r"\xspace", "")
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(
+            r"\\(?:emph|textbf|textit|textsc|texttt|mathrm)\s*\{([^{}]*)\}",
+            r"\1",
+            text,
+        )
+    text = text.replace(r"\LaTeX", "LaTeX").replace(r"\TeX", "TeX")
+    if re.search(r"\\[A-Za-z@]+", text) or "#" in text:
+        return ""
+    return latex_text(text).strip()
+
+
+def extract_simple_macros(source: str) -> Dict[str, str]:
+    macros: Dict[str, str] = {}
+    for match in MACRO_DEFINITION_RE.finditer(source):
+        if match.group("arguments") not in {None, "0"}:
+            continue
+        closing = _find_closing_brace(source, match.end())
+        if closing < 0:
+            continue
+        preview = _macro_preview(source[match.end() : closing])
+        if preview:
+            macros[match.group("name")] = preview
+    return macros
+
+
 def _find_closing_brace(source: str, start: int) -> int:
     depth = 1
     cursor = start
@@ -144,10 +197,49 @@ def _find_closing_brace(source: str, start: int) -> int:
     return -1
 
 
-def tokenize_inline(source: str) -> Tuple[List[Dict[str, object]], List[ArticleToken]]:
+def _citation_display(
+    command: str,
+    keys: Sequence[str],
+    bibliography: Mapping[str, BibliographyEntry],
+) -> Tuple[str, str, bool]:
+    entries = [bibliography.get(key) for key in keys]
+    unresolved = any(entry is None for entry in entries)
+
+    if command in {"citeauthor"}:
+        labels = [entry.author_label if entry else key for key, entry in zip(keys, entries)]
+        display = "; ".join(labels)
+    elif command in {"citeyear"}:
+        labels = [entry.year if entry and entry.year else key for key, entry in zip(keys, entries)]
+        display = "; ".join(labels)
+    elif command in {"citet", "textcite"}:
+        labels = [entry.narrative_label if entry else key for key, entry in zip(keys, entries)]
+        display = "; ".join(labels)
+    else:
+        labels = [entry.label if entry else key for key, entry in zip(keys, entries)]
+        display = "(" + "; ".join(labels) + ")"
+
+    tooltip_lines = [
+        entry.tooltip if entry else f"{key} — bibliography entry not found"
+        for key, entry in zip(keys, entries)
+    ]
+    return display, "\n".join(tooltip_lines), unresolved
+
+
+def tokenize_inline(
+    source: str,
+    *,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
+) -> Tuple[List[Dict[str, object]], List[ArticleToken]]:
     runs: List[Dict[str, object]] = []
     tokens: List[ArticleToken] = []
     cursor = 0
+    bibliography = bibliography or {}
+    macros = macros or {}
+    token_re = INLINE_TOKEN_RE
+    if macros:
+        macro_names = "|".join(re.escape(name) for name in sorted(macros, key=len, reverse=True))
+        token_re = re.compile(INLINE_TOKEN_RE.pattern + rf"|\\(?:{macro_names})(?:\{{\}})?")
 
     def add_text(raw: str) -> None:
         rendered = latex_text(raw)
@@ -155,7 +247,7 @@ def tokenize_inline(source: str) -> Tuple[List[Dict[str, object]], List[ArticleT
             runs.append({"type": "text", "text": rendered})
 
     while cursor < len(source):
-        match = INLINE_TOKEN_RE.search(source, cursor)
+        match = token_re.search(source, cursor)
         if not match:
             add_text(source[cursor:])
             break
@@ -163,6 +255,8 @@ def tokenize_inline(source: str) -> Tuple[List[Dict[str, object]], List[ArticleT
         raw = ""
         display = ""
         kind = "latex"
+        tooltip: Optional[str] = None
+        unresolved = False
         end = match.end()
         marker = match.group(0)
 
@@ -179,6 +273,45 @@ def tokenize_inline(source: str) -> Tuple[List[Dict[str, object]], List[ArticleT
             raw = marker
             display = "Alice; AI_Collar ⊢ 我 : Dog"
             kind = "formula"
+        elif marker.startswith(r"\textbackslash{}"):
+            legacy_match = re.fullmatch(
+                r"\\textbackslash\{\}(?P<command>cite|citep|citet|citeauthor|citeyear|"
+                r"parencite|textcite|autocite)\s*\\\{(?P<keys>[^{}]*)\\\}",
+                marker,
+            )
+            if not legacy_match:
+                add_text(marker)
+                cursor = match.end()
+                continue
+            keys = [key.strip() for key in legacy_match.group("keys").split(",") if key.strip()]
+            raw = f"\\{legacy_match.group('command')}{{{','.join(keys)}}}"
+            display, tooltip, unresolved = _citation_display(
+                legacy_match.group("command"), keys, bibliography
+            )
+            tooltip = "Legacy escaped citation; saving this paragraph repairs it.\n" + tooltip
+            kind = "citation"
+        elif re.match(
+            r"\\(?:cite|citep|citet|citeauthor|citeyear|parencite|textcite|autocite)",
+            marker,
+        ):
+            command_match = re.match(r"\\(?P<command>[A-Za-z]+)", marker)
+            closing = _find_closing_brace(source, match.end())
+            if not command_match or closing < 0:
+                add_text(source[match.start() :])
+                break
+            raw = source[match.start() : closing + 1]
+            keys = [key.strip() for key in source[match.end() : closing].split(",") if key.strip()]
+            display, tooltip, unresolved = _citation_display(
+                command_match.group("command"), keys, bibliography
+            )
+            kind = "citation"
+            end = closing + 1
+        elif marker.startswith("\\") and marker[1:].rstrip("{}").strip() in macros:
+            raw = marker
+            name = marker[1:].rstrip("{}").strip()
+            display = macros[name]
+            kind = "macro"
+            tooltip = f"Protected LaTeX macro: \\{name}"
         else:
             command = marker[1 : marker.index("{")]
             closing = _find_closing_brace(source, match.end())
@@ -192,9 +325,16 @@ def tokenize_inline(source: str) -> Tuple[List[Dict[str, object]], List[ArticleT
             end = closing + 1
 
         index = len(tokens)
-        token = ArticleToken(index=index, source=raw, text=display, kind=kind)
+        token = ArticleToken(
+            index=index,
+            source=raw,
+            text=display,
+            kind=kind,
+            tooltip=tooltip,
+            unresolved=unresolved,
+        )
         tokens.append(token)
-        runs.append({"type": "token", "index": index, "text": display, "kind": kind})
+        runs.append({"type": "token", **token.public_dict()})
         cursor = end
 
     return runs, tokens
@@ -257,8 +397,12 @@ def _make_block(
     content_start: int,
     content_end: int,
     heading_level: Optional[int] = None,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
 ) -> ArticleBlock:
-    runs, tokens = tokenize_inline(source[content_start:content_end])
+    runs, tokens = tokenize_inline(
+        source[content_start:content_end], bibliography=bibliography, macros=macros
+    )
     default_id = _block_id(kind, source, start, end)
     return ArticleBlock(
         id=_anchored_id(masked, anchors, start, default_id),
@@ -275,6 +419,60 @@ def _make_block(
     )
 
 
+def parse_document_title(
+    source: str,
+    *,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
+) -> Optional[ArticleBlock]:
+    match = DOCUMENT_TITLE_RE.search(source)
+    if not match:
+        return None
+    document_begin = DOCUMENT_BEGIN_RE.search(source)
+    if document_begin and match.start() > document_begin.start():
+        return None
+    closing = _find_closing_brace(source, match.end())
+    if closing < 0:
+        return None
+    masked = metadata_mask(source)
+    return _make_block(
+        source=source,
+        masked=masked,
+        anchors=_anchor_spans(source),
+        kind="title",
+        start=match.start(),
+        end=closing + 1,
+        content_start=match.end(),
+        content_end=closing,
+        bibliography=bibliography,
+        macros=macros,
+    )
+
+
+def _abstract_heading(
+    source: str,
+    masked: str,
+    anchors: Sequence[Tuple[str, int, int]],
+    start: int,
+    end: int,
+) -> ArticleBlock:
+    block_id = _anchored_id(
+        masked, anchors, start, _block_id("abstract-heading", source, start, end)
+    )
+    return ArticleBlock(
+        id=block_id,
+        kind="abstract-heading",
+        start=start,
+        end=end,
+        content_start=start,
+        content_end=start,
+        line_start=source.count("\n", 0, start) + 1,
+        line_end=source.count("\n", 0, max(start, end - 1)) + 1,
+        runs=[{"type": "text", "text": "Abstract"}],
+        heading_level=1,
+    )
+
+
 def _article_bounds(source: str, *, allow_fragment: bool) -> Tuple[int, int]:
     begin = DOCUMENT_BEGIN_RE.search(source)
     end = DOCUMENT_END_RE.search(source, begin.end() if begin else 0)
@@ -285,7 +483,14 @@ def _article_bounds(source: str, *, allow_fragment: bool) -> Tuple[int, int]:
     raise ValueError("The LaTeX document must contain a document environment.")
 
 
-def parse_article_range(source: str, start: int, end: int) -> List[ArticleBlock]:
+def parse_article_range(
+    source: str,
+    start: int,
+    end: int,
+    *,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
+) -> List[ArticleBlock]:
     if start < 0 or end < start or end > len(source):
         raise ValueError("The article source range is invalid.")
 
@@ -309,6 +514,11 @@ def parse_article_range(source: str, start: int, end: int) -> List[ArticleBlock]
         raw_line = source[line_start:line_content_end]
         stripped = masked_line.strip()
         if not stripped or stripped.startswith("%"):
+            index += 1
+            continue
+
+        if ABSTRACT_BEGIN_RE.match(raw_line):
+            blocks.append(_abstract_heading(source, masked, anchors, line_start, line_end))
             index += 1
             continue
 
@@ -345,6 +555,8 @@ def parse_article_range(source: str, start: int, end: int) -> List[ArticleBlock]
                     content_start=content_start,
                     content_end=content_end,
                     heading_level=heading_level,
+                    bibliography=bibliography,
+                    macros=macros,
                 )
             )
             index += 1
@@ -380,6 +592,8 @@ def parse_article_range(source: str, start: int, end: int) -> List[ArticleBlock]
                 end=paragraph_end,
                 content_start=paragraph_start + leading,
                 content_end=paragraph_content_end,
+                bibliography=bibliography,
+                macros=macros,
             )
         )
         index = cursor_index
@@ -390,15 +604,48 @@ def parse_article_range(source: str, start: int, end: int) -> List[ArticleBlock]
     return blocks
 
 
-def parse_article(source: str, *, allow_fragment: bool = False) -> List[ArticleBlock]:
+def parse_article(
+    source: str,
+    *,
+    allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
+) -> List[ArticleBlock]:
     start, end = _article_bounds(source, allow_fragment=allow_fragment)
-    return parse_article_range(source, start, end)
+    effective_macros = dict(macros or extract_simple_macros(source))
+    blocks: List[ArticleBlock] = []
+    if not allow_fragment:
+        title = parse_document_title(
+            source, bibliography=bibliography, macros=effective_macros
+        )
+        if title:
+            blocks.append(title)
+    blocks.extend(
+        parse_article_range(
+            source,
+            start,
+            end,
+            bibliography=bibliography,
+            macros=effective_macros,
+        )
+    )
+    return blocks
 
 
 def article_block(
-    source: str, block_id: str, *, allow_fragment: bool = False
+    source: str,
+    block_id: str,
+    *,
+    allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
 ) -> ArticleBlock:
-    for block in parse_article(source, allow_fragment=allow_fragment):
+    for block in parse_article(
+        source,
+        allow_fragment=allow_fragment,
+        bibliography=bibliography,
+        macros=macros,
+    ):
         if block.id == block_id:
             return block
     raise ValueError("That article block no longer exists. Reload and try again.")
@@ -461,8 +708,16 @@ def update_article_block(
     segments: Iterable[Dict[str, object]],
     *,
     allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
 ) -> str:
-    block = article_block(source, block_id, allow_fragment=allow_fragment)
+    block = article_block(
+        source,
+        block_id,
+        allow_fragment=allow_fragment,
+        bibliography=bibliography,
+        macros=macros,
+    )
     replacement = serialize_segments(block, segments)
     return source[: block.content_start] + replacement + source[block.content_end :]
 
@@ -478,6 +733,8 @@ def add_article_comment(
     prefix: Optional[str] = None,
     suffix: Optional[str] = None,
     allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
 ) -> str:
     author = author.strip()
     body = body.strip()
@@ -503,7 +760,13 @@ def add_article_comment(
     if scope != "inline" or not block_id:
         raise ValueError("Inline comments require an article block.")
 
-    block = article_block(source, block_id, allow_fragment=allow_fragment)
+    block = article_block(
+        source,
+        block_id,
+        allow_fragment=allow_fragment,
+        bibliography=bibliography,
+        macros=macros,
+    )
     target = block.id if block.id.startswith("ta-") else "ta-" + uuid.uuid4().hex[:8]
     anchor = "" if block.id.startswith("ta-") else f'%<text-anchor id="{target}"/>\n'
     comment = format_comment(
@@ -538,8 +801,16 @@ def add_article_highlight(
     suffix: Optional[str] = None,
     tone: str = "amber",
     allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
 ) -> str:
-    block = article_block(source, block_id, allow_fragment=allow_fragment)
+    block = article_block(
+        source,
+        block_id,
+        allow_fragment=allow_fragment,
+        bibliography=bibliography,
+        macros=macros,
+    )
     target = block.id if block.id.startswith("ta-") else "ta-" + uuid.uuid4().hex[:8]
     anchor = "" if block.id.startswith("ta-") else f'%<text-anchor id="{target}"/>\n'
     highlight = format_highlight(

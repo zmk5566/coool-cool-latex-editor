@@ -214,6 +214,8 @@ class EditorApplication:
                 target.block.id,
                 segments,
                 allow_fragment=True,
+                bibliography=project.bibliography,
+                macros=project.macros,
             )
             self._save_project_source(
                 project=project,
@@ -243,6 +245,8 @@ class EditorApplication:
                 prefix=str(payload.get("prefix", "")) or None,
                 suffix=str(payload.get("suffix", "")) or None,
                 allow_fragment=True,
+                bibliography=project.bibliography,
+                macros=project.macros,
             )
             self._save_project_source(
                 project=project,
@@ -282,6 +286,8 @@ class EditorApplication:
                 suffix=str(payload.get("suffix", "")) or None,
                 tone=str(payload.get("tone", "amber")),
                 allow_fragment=True,
+                bibliography=project.bibliography,
+                macros=project.macros,
             )
             self._save_project_source(
                 project=project,

@@ -321,7 +321,11 @@ function jumpToOutlineBlock(blockId) {
 function renderOutline() {
   if (!state.article) return;
   const structuralBlocks = state.article.blocks.filter((block) => {
-    return block.kind === "title" || block.kind === "heading";
+    return (
+      block.kind === "title" ||
+      block.kind === "abstract-heading" ||
+      block.kind === "heading"
+    );
   });
   const items = structuralBlocks.map((block) => {
     const button = document.createElement("button");
@@ -343,10 +347,11 @@ function renderOutline() {
 function createToken(run) {
   const token = document.createElement("span");
   token.className = "protected-token " + run.kind;
+  if (run.unresolved) token.classList.add("is-unresolved");
   token.dataset.tokenIndex = String(run.index);
   token.contentEditable = "false";
   token.textContent = run.text;
-  token.title = "Protected LaTeX: edit in Source mode";
+  token.title = run.tooltip || "Protected LaTeX: edit in Source mode";
   return token;
 }
 
@@ -505,15 +510,19 @@ function renderBlock(block) {
 
   const content = document.createElement("div");
   content.className = "editable-content";
-  content.tabIndex = 0;
+  const canEdit = block.editable !== false;
+  content.tabIndex = canEdit ? 0 : -1;
   const sourceLocation = block.source_path
     ? block.source_path + ":" + block.line_start + "–" + block.line_end
     : "the LaTeX source";
-  content.setAttribute("aria-label", "Edit " + block.kind + " in " + sourceLocation);
+  content.setAttribute(
+    "aria-label",
+    (canEdit ? "Edit " : "Read ") + block.kind + " in " + sourceLocation
+  );
   content.title = "Source: " + sourceLocation;
   fillRuns(content, block);
 
-  const isEditing = state.activeBlockId === block.id;
+  const isEditing = canEdit && state.activeBlockId === block.id;
   if (isEditing) {
     row.classList.add("is-editing");
     content.contentEditable = "true";
@@ -550,7 +559,7 @@ function renderBlock(block) {
       selection.addRange(range);
       setDirty(true);
     });
-  } else {
+  } else if (canEdit) {
     content.addEventListener("click", () => {
       const selection = window.getSelection();
       if (selection && !selection.isCollapsed && selection.toString().trim()) return;

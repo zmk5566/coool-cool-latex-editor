@@ -8,6 +8,8 @@ A lightweight, local, Git-native writing and review interface for LaTeX manuscri
 
 - Renders LaTeX as a centered article instead of an IDE or PDF viewer.
 - Recursively follows static `\\input{...}` and `\\include{...}` references, including references from already included files.
+- Keeps the document title and an explicit Abstract heading in the article view.
+- Resolves BibTeX citations into protected author-year labels with full-reference hover text while preserving the original `\\cite{...}` source.
 - Lets you click a paragraph for a focused edit while protecting formulas, emphasis, links, and other LaTeX structures.
 - Adds passage comments, document-level comments, and editor-only highlights from a text selection.
 - Stores annotations as TeX comments, so they do not appear in normal LaTeX or PDF output.
@@ -56,7 +58,7 @@ cool-cool-latex-editor draft/proposal.tex --port 0 --open
 
 The editor discovers the containing Git repository automatically. Use `--root /path/to/repository` only when automatic discovery is not appropriate.
 
-For a multi-file manuscript, pass the main entry file. The header reports how many source files were loaded, and hovering it lists their paths and any unresolved include warnings. Article edits, comments, and highlights are written back to the included file that owns the selected passage. **Source** mode intentionally edits only the main entry file.
+For a multi-file manuscript, pass the main entry file. The header reports how many source files were loaded, and hovering it lists their paths and any unresolved include warnings. Article edits, comments, and highlights are written back to the included file that owns the selected passage. **Source** mode intentionally edits only the main entry file. BibTeX files named by `\\bibliography{...}` or `\\addbibresource{...}` are watched as display dependencies; changing one refreshes citation labels without counting it as a LaTeX source file.
 
 Check the installed version with:
 
@@ -148,4 +150,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-Current version: `0.2.0`
+Current version: `0.2.1`
