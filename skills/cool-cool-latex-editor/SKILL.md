@@ -1,6 +1,6 @@
 ---
 name: cool-cool-latex-editor
-description: Launch, explain, version-check, or update Cool Cool LaTeX Editor for local Git-managed .tex review. Use when a user asks Codex to open a LaTeX manuscript in the editor, choose its local port, work with its comments or highlights, check its installed version, or update it from GitHub. Do not use for general LaTeX compilation or PDF editing.
+description: Launch, explain, version-check, or update Cool Cool LaTeX Editor for local Git-managed single-file or recursively included .tex review. Use when a user asks Codex to open a LaTeX manuscript in the editor, choose its local port, work with its comments or highlights, check its installed version, or update it from GitHub. Do not use for general LaTeX compilation or PDF editing.
 ---
 
 # Cool Cool LaTeX Editor
@@ -10,6 +10,8 @@ Use this skill to operate the lightweight local article-review UI while keeping 
 ## Open a manuscript
 
 Resolve the requested `.tex` path from the current repository. If no file was named and there is only one plausible manuscript, use it; otherwise ask which file to open.
+
+For a project using `\\input` or `\\include`, choose the main file containing the document environment. The editor recursively follows static references inside the repository, including references from included files. After launch, use the source count and warning details in the header to confirm that the intended files loaded.
 
 Check whether the command is available:
 
@@ -36,10 +38,13 @@ Prefer `pipx`; use a project virtual environment or ordinary `pip` only when tha
 ## Explain the editing model
 
 - The browser view is an intermediate representation; the `.tex` file remains authoritative.
+- In a multi-file project, each article block retains its source path. Paragraph edits, inline comments, and highlights write back to that file; overall comments belong to the main entry file.
 - Paragraph edits preserve protected LaTeX tokens. Structural edits belong in **Source** mode.
+- **Source** mode edits only the main entry file. Use the article view for focused changes in included files.
 - Passage comments, overall comments, anchors, and highlights are stored as TeX comments and do not render into normal PDF output.
 - **Reading** is quiet; **Bubbles** shows open discussions beside their text on wide screens.
-- External disk changes produce a reload prompt. Never discard unsaved browser edits on the user's behalf.
+- External disk changes in any loaded source produce a reload prompt. Never discard unsaved browser edits on the user's behalf.
+- Static references outside the repository and dynamic macro-generated include paths remain unresolved warnings; do not guess or silently read beyond the repository boundary.
 - Git identity is only a browser suggestion. The name chosen in the UI is copied into each annotation.
 
 ## Check or update the installation

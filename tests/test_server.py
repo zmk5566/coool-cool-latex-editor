@@ -48,6 +48,35 @@ class ServerTests(unittest.TestCase):
             data = response.read()
         return json.loads(data) if "application/json" in content_type else data
 
+    def write_multifile_document(self):
+        sections = self.root / "sections"
+        figures = self.root / "figures"
+        sections.mkdir(exist_ok=True)
+        figures.mkdir(exist_ok=True)
+        included = sections / "one.tex"
+        nested = figures / "deep.tex"
+        self.document.write_text(
+            "\\documentclass{article}\n"
+            "\\begin{document}\n"
+            "Root opening.\n\n"
+            "\\input{sections/one}\n\n"
+            "Root closing.\n"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+        included.write_text(
+            "\\section{Included section}\n"
+            "\\label{sec:included}\n\n"
+            "Included paragraph.\n\n"
+            "\\input{figures/deep}\n",
+            encoding="utf-8",
+        )
+        nested.write_text(
+            "\\section{Deep section}\n\nDeep paragraph.\n",
+            encoding="utf-8",
+        )
+        return included, nested
+
     def test_document_can_be_loaded_and_saved(self):
         document = self.request("/api/document")
         self.assertEqual(document["path"], "draft/proposal.tex")
@@ -71,6 +100,163 @@ class ServerTests(unittest.TestCase):
         )
         changed = self.request("/api/status")
         self.assertNotEqual(changed["hash"], article["hash"])
+
+    def test_article_api_recursively_expands_input_files_in_order(self):
+        self.write_multifile_document()
+
+        article = self.request("/api/article")
+        texts = [
+            "".join(str(run.get("text", "")) for run in block["runs"])
+            for block in article["blocks"]
+        ]
+
+        self.assertEqual(
+            texts,
+            [
+                "Root opening.",
+                "Included section",
+                "Included paragraph.",
+                "Deep section",
+                "Deep paragraph.",
+                "Root closing.",
+            ],
+        )
+        self.assertEqual(
+            [source["path"] for source in article["sources"]],
+            ["draft/proposal.tex", "sections/one.tex", "figures/deep.tex"],
+        )
+        self.assertEqual(article["warnings"], [])
+        self.assertEqual(article["blocks"][4]["source_path"], "figures/deep.tex")
+
+    def test_recursive_article_edit_writes_to_the_origin_file(self):
+        _included, nested = self.write_multifile_document()
+        root_before = self.document.read_text(encoding="utf-8")
+        article = self.request("/api/article")
+        block = next(
+            block
+            for block in article["blocks"]
+            if block["source_path"] == "figures/deep.tex" and block["kind"] == "paragraph"
+        )
+
+        updated = self.request(
+            "/api/article/block",
+            method="PUT",
+            payload={
+                "block_id": block["id"],
+                "segments": [{"type": "text", "value": "Deep paragraph revised."}],
+                "expected_hash": article["hash"],
+            },
+        )
+
+        self.assertIn("Deep paragraph revised.", nested.read_text(encoding="utf-8"))
+        self.assertEqual(self.document.read_text(encoding="utf-8"), root_before)
+        self.assertTrue(
+            any(
+                item["source_path"] == "figures/deep.tex"
+                and item["runs"][0]["text"] == "Deep paragraph revised."
+                for item in updated["blocks"]
+                if item["kind"] == "paragraph"
+            )
+        )
+
+    def test_recursive_comments_and_highlights_stay_with_the_origin_file(self):
+        included, nested = self.write_multifile_document()
+        article = self.request("/api/article")
+        included_block = next(
+            block
+            for block in article["blocks"]
+            if block["source_path"] == "sections/one.tex" and block["kind"] == "paragraph"
+        )
+        commented = self.request(
+            "/api/article/comments",
+            method="POST",
+            payload={
+                "expected_hash": article["hash"],
+                "author": "Alice",
+                "body": "Comment in the included section.",
+                "scope": "inline",
+                "block_id": included_block["id"],
+                "quote": "Included paragraph",
+            },
+        )
+        comment = commented["comments"][0]
+
+        self.assertIn("%<editor-comment", included.read_text(encoding="utf-8"))
+        self.assertNotIn("%<editor-comment", self.document.read_text(encoding="utf-8"))
+        self.assertEqual(comment["source_path"], "sections/one.tex")
+        self.assertTrue(comment["target"].startswith("sections/one.tex::ta-"))
+
+        deep_block = next(
+            block
+            for block in commented["blocks"]
+            if block["source_path"] == "figures/deep.tex" and block["kind"] == "paragraph"
+        )
+        highlighted = self.request(
+            "/api/article/highlights",
+            method="POST",
+            payload={
+                "expected_hash": commented["hash"],
+                "author": "Bob",
+                "block_id": deep_block["id"],
+                "quote": "Deep paragraph",
+                "tone": "amber",
+            },
+        )
+
+        self.assertIn("%<editor-highlight", nested.read_text(encoding="utf-8"))
+        self.assertEqual(highlighted["highlights"][0]["source_path"], "figures/deep.tex")
+        self.assertTrue(
+            highlighted["highlights"][0]["target"].startswith("figures/deep.tex::ta-")
+        )
+
+        addressed = self.request(
+            "/api/article/comments/status",
+            method="POST",
+            payload={
+                "expected_hash": highlighted["hash"],
+                "id": comment["id"],
+                "status": "addressed",
+            },
+        )
+        self.assertEqual(addressed["comments"][0]["status"], "addressed")
+        self.assertIn('% status="addressed"', included.read_text(encoding="utf-8"))
+
+    def test_status_api_detects_an_external_update_to_an_included_file(self):
+        _included, nested = self.write_multifile_document()
+        article = self.request("/api/article")
+
+        nested.write_text(
+            "\\section{Deep section}\n\nChanged outside the editor.\n",
+            encoding="utf-8",
+        )
+        changed = self.request("/api/status")
+
+        self.assertNotEqual(changed["hash"], article["hash"])
+        self.assertEqual(changed["source_count"], 3)
+
+    def test_missing_and_circular_inputs_report_warnings_without_crashing(self):
+        sections = self.root / "sections"
+        sections.mkdir()
+        (sections / "cycle.tex").write_text(
+            "Cycle text.\n\\input{draft/proposal}\n",
+            encoding="utf-8",
+        )
+        self.document.write_text(
+            "\\documentclass{article}\n"
+            "\\begin{document}\n"
+            "Before.\n"
+            "\\input{sections/cycle}\n"
+            "\\input{sections/missing}\n"
+            "After.\n"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+
+        article = self.request("/api/article")
+
+        self.assertTrue(any("Circular include skipped" in item for item in article["warnings"]))
+        self.assertTrue(any("Included file not found" in item for item in article["warnings"]))
+        self.assertGreaterEqual(len(article["blocks"]), 3)
 
     def test_comment_api_and_clean_export(self):
         document = self.request("/api/document")

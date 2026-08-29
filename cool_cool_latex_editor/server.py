@@ -12,13 +12,12 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from .article import (
     add_article_comment,
     add_article_highlight,
-    parse_article,
     update_article_block,
 )
 from .comments import (
@@ -29,6 +28,7 @@ from .comments import (
     set_comment_status,
     strip_editor_metadata,
 )
+from .project import LatexProject, ProjectSource
 
 
 MAX_REQUEST_BYTES = 12 * 1024 * 1024
@@ -66,42 +66,78 @@ class EditorApplication:
     def read_source(self) -> str:
         return self.document.read_text(encoding="utf-8")
 
+    def read_project(self) -> LatexProject:
+        return LatexProject.load(root=self.root, document=self.document)
+
     def _assert_hash(self, expected_hash: Optional[str], current: str) -> None:
         if expected_hash and expected_hash != content_hash(current):
             raise DocumentConflict(
                 "The LaTeX file changed on disk. Reload before overwriting it."
             )
 
-    def save_source(self, content: str, expected_hash: Optional[str]) -> str:
+    def _assert_project_hash(
+        self, expected_hash: Optional[str], project: LatexProject
+    ) -> None:
+        if expected_hash and expected_hash != project.hash:
+            raise DocumentConflict(
+                "A LaTeX source file changed on disk. Reload before overwriting it."
+            )
+
+    def _write_source_file(self, path: Path, content: str) -> None:
         if "\x00" in content:
             raise ValueError("The document contains an invalid null byte.")
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(self.root)
+        except ValueError as exc:
+            raise ValueError("LaTeX source files must stay inside the repository root.") from exc
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=str(resolved.parent),
+            prefix="." + resolved.name + ".",
+            suffix=".tmp",
+            delete=False,
+        )
+        temp_path = Path(handle.name)
+        try:
+            with handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(str(temp_path), str(resolved))
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+    def _save_project_source(
+        self,
+        *,
+        project: LatexProject,
+        source: ProjectSource,
+        content: str,
+        expected_hash: Optional[str],
+    ) -> None:
+        self._assert_project_hash(expected_hash, project)
+        current = source.path.read_text(encoding="utf-8")
+        if content_hash(current) != source.hash:
+            raise DocumentConflict(
+                f"{source.relative_path} changed on disk. Reload before overwriting it."
+            )
+        if current != content:
+            self._write_source_file(source.path, content)
+
+    def save_source(self, content: str, expected_hash: Optional[str]) -> str:
         with self.lock:
             current = self.read_source()
             self._assert_hash(expected_hash, current)
             if current == content:
                 return content_hash(current)
-            handle = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                newline="",
-                dir=str(self.document.parent),
-                prefix="." + self.document.name + ".",
-                suffix=".tmp",
-                delete=False,
-            )
-            temp_path = Path(handle.name)
-            try:
-                with handle:
-                    handle.write(content)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(str(temp_path), str(self.document))
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
+            self._write_source_file(self.document, content)
             return content_hash(content)
 
-    def git_info(self) -> Dict[str, Any]:
+    def git_info(self, paths: Optional[Sequence[str]] = None) -> Dict[str, Any]:
         def git(*args: str) -> str:
             result = subprocess.run(
                 ["git", *args],
@@ -113,10 +149,11 @@ class EditorApplication:
             )
             return result.stdout.strip()
 
+        tracked_paths = list(paths or [self.relative_document])
         return {
             "user": git("config", "--get", "user.name"),
             "branch": git("rev-parse", "--abbrev-ref", "HEAD") or "—",
-            "status": git("status", "--short", "--", self.relative_document),
+            "status": git("status", "--short", "--", *tracked_paths),
         }
 
     def document_payload(self) -> Dict[str, Any]:
@@ -143,95 +180,128 @@ class EditorApplication:
 
     def article_payload(self) -> Dict[str, Any]:
         with self.lock:
-            source = self.read_source()
-            comments = [item.public_dict() for item in parse_comments(source)]
-            highlights = [item.public_dict() for item in parse_highlights(source)]
-            blocks = [block.public_dict() for block in parse_article(source)]
+            project = self.read_project()
         return {
             "path": self.relative_document,
             "name": self.document.name,
-            "hash": content_hash(source),
-            "blocks": blocks,
-            "comments": comments,
-            "highlights": highlights,
-            "git": self.git_info(),
+            "hash": project.hash,
+            "blocks": [block.public_dict() for block in project.blocks],
+            "comments": project.comments_payload(),
+            "highlights": project.highlights_payload(),
+            "sources": project.source_payloads(),
+            "warnings": project.warnings,
+            "git": self.git_info(project.relative_paths),
         }
 
     def status_payload(self) -> Dict[str, Any]:
         with self.lock:
-            source = self.read_source()
-            modified_ns = self.document.stat().st_mtime_ns
+            project = self.read_project()
         return {
-            "hash": content_hash(source),
-            "modified_ns": modified_ns,
+            "hash": project.hash,
+            "modified_ns": project.modified_ns,
+            "source_count": len(project.sources),
         }
 
     def update_article_block(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            current = self.read_source()
-            self._assert_hash(payload.get("expected_hash"), current)
+            project = self.read_project()
+            target = project.block(str(payload.get("block_id", "")))
             segments = payload.get("segments")
             if not isinstance(segments, list):
                 raise ValueError("Edited article content must be a list of segments.")
             updated = update_article_block(
-                current,
-                str(payload.get("block_id", "")),
+                target.source.content,
+                target.block.id,
                 segments,
+                allow_fragment=True,
             )
-            self.save_source(updated, content_hash(current))
+            self._save_project_source(
+                project=project,
+                source=target.source,
+                content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
         return self.article_payload()
 
     def add_article_comment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            current = self.read_source()
-            self._assert_hash(payload.get("expected_hash"), current)
+            project = self.read_project()
+            scope = str(payload.get("scope", "document"))
+            source = project.root_source
+            local_block_id = None
+            if scope == "inline":
+                target = project.block(str(payload.get("block_id", "")))
+                source = target.source
+                local_block_id = target.block.id
             updated = add_article_comment(
-                current,
+                source.content,
                 author=str(payload.get("author", "")),
                 body=str(payload.get("body", "")),
-                scope=str(payload.get("scope", "document")),
-                block_id=str(payload.get("block_id", "")) or None,
+                scope=scope,
+                block_id=local_block_id,
                 quote=str(payload.get("quote", "")) or None,
                 prefix=str(payload.get("prefix", "")) or None,
                 suffix=str(payload.get("suffix", "")) or None,
+                allow_fragment=True,
             )
-            self.save_source(updated, content_hash(current))
+            self._save_project_source(
+                project=project,
+                source=source,
+                content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
         return self.article_payload()
 
     def update_article_comment_status(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            current = self.read_source()
-            self._assert_hash(payload.get("expected_hash"), current)
+            project = self.read_project()
+            source = project.comment_source(str(payload.get("id", "")))
             updated = set_comment_status(
-                current,
+                source.content,
                 str(payload.get("id", "")),
                 str(payload.get("status", "addressed")),
             )
-            self.save_source(updated, content_hash(current))
+            self._save_project_source(
+                project=project,
+                source=source,
+                content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
         return self.article_payload()
 
     def add_article_highlight(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            current = self.read_source()
-            self._assert_hash(payload.get("expected_hash"), current)
+            project = self.read_project()
+            target = project.block(str(payload.get("block_id", "")))
             updated = add_article_highlight(
-                current,
+                target.source.content,
                 author=str(payload.get("author", "")),
-                block_id=str(payload.get("block_id", "")),
+                block_id=target.block.id,
                 quote=str(payload.get("quote", "")),
                 prefix=str(payload.get("prefix", "")) or None,
                 suffix=str(payload.get("suffix", "")) or None,
                 tone=str(payload.get("tone", "amber")),
+                allow_fragment=True,
             )
-            self.save_source(updated, content_hash(current))
+            self._save_project_source(
+                project=project,
+                source=target.source,
+                content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
         return self.article_payload()
 
     def remove_article_highlight(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
-            current = self.read_source()
-            self._assert_hash(payload.get("expected_hash"), current)
-            updated = remove_highlight(current, str(payload.get("id", "")))
-            self.save_source(updated, content_hash(current))
+            project = self.read_project()
+            source = project.highlight_source(str(payload.get("id", "")))
+            updated = remove_highlight(source.content, str(payload.get("id", "")))
+            self._save_project_source(
+                project=project,
+                source=source,
+                content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
         return self.article_payload()
 
     def add_comment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -314,17 +384,11 @@ class EditorApplication:
             }
 
     def git_diff(self) -> Dict[str, str]:
-        status = self.git_info()["status"]
-        command = ["git", "diff", "--no-ext-diff", "--", self.relative_document]
-        if str(status).startswith("??"):
-            command = [
-                "git",
-                "diff",
-                "--no-index",
-                "--",
-                os.devnull,
-                str(self.document),
-            ]
+        with self.lock:
+            project = self.read_project()
+        paths = project.relative_paths
+        status = self.git_info(paths)["status"]
+        command = ["git", "diff", "--no-ext-diff", "--", *paths]
         result = subprocess.run(
             command,
             cwd=str(self.root),
@@ -335,7 +399,7 @@ class EditorApplication:
         )
         diff = result.stdout.strip()
         if not diff:
-            diff = "No textual changes in this LaTeX file."
+            diff = "No textual changes in the loaded LaTeX source files."
         return {"status": str(status), "diff": diff}
 
 

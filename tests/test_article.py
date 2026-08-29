@@ -47,6 +47,38 @@ SAMPLE = "\n".join(
 
 
 class ArticleTests(unittest.TestCase):
+    def test_parses_included_fragment_and_skips_non_prose_figure_source(self):
+        fragment = "\n".join(
+            [
+                BS + "section{A nested section}",
+                BS + "label{sec:nested}",
+                "Readable prose.",
+                BS + "subsection{Nested detail}",
+                "Detail prose.",
+                BS + "begin{figure*}",
+                BS + "begin{tikzpicture}",
+                BS + "node {Implementation diagram internals};",
+                BS + "end{tikzpicture}",
+                BS + "caption{A figure caption}",
+                BS + "end{figure*}",
+                "Prose after the figure.",
+            ]
+        )
+
+        blocks = parse_article(fragment, allow_fragment=True)
+
+        self.assertEqual(
+            ["".join(str(run["text"]) for run in block.runs) for block in blocks],
+            [
+                "A nested section",
+                "Readable prose.",
+                "Nested detail",
+                "Detail prose.",
+                "Prose after the figure.",
+            ],
+        )
+        self.assertEqual([blocks[0].heading_level, blocks[2].heading_level], [1, 2])
+
     def test_parses_semantic_blocks_without_latex_scaffolding(self):
         blocks = parse_article(SAMPLE)
 

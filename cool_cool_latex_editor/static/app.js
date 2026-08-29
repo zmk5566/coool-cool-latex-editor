@@ -326,7 +326,10 @@ function renderOutline() {
   const items = structuralBlocks.map((block) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "outline-item" + (block.kind === "title" ? " is-title" : "");
+    button.className =
+      "outline-item" +
+      (block.kind === "title" ? " is-title" : "") +
+      (block.heading_level ? " is-level-" + block.heading_level : "");
     button.dataset.outlineBlockId = block.id;
     button.textContent = blockText(block);
     button.title = blockText(block);
@@ -497,11 +500,17 @@ function renderBlock(block) {
   const row = document.createElement("div");
   row.className = "article-block " + block.kind;
   row.dataset.blockId = block.id;
+  if (block.source_path) row.dataset.sourcePath = block.source_path;
+  if (block.heading_level) row.dataset.headingLevel = String(block.heading_level);
 
   const content = document.createElement("div");
   content.className = "editable-content";
   content.tabIndex = 0;
-  content.setAttribute("aria-label", "Edit " + block.kind);
+  const sourceLocation = block.source_path
+    ? block.source_path + ":" + block.line_start + "–" + block.line_end
+    : "the LaTeX source";
+  content.setAttribute("aria-label", "Edit " + block.kind + " in " + sourceLocation);
+  content.title = "Source: " + sourceLocation;
   fillRuns(content, block);
 
   const isEditing = state.activeBlockId === block.id;
@@ -664,7 +673,9 @@ function commentCard(comment) {
   author.textContent = comment.author;
   const date = document.createElement("time");
   date.className = "comment-date";
-  date.textContent = formatDate(comment.created);
+  date.textContent = [formatDate(comment.created), comment.source_path]
+    .filter(Boolean)
+    .join(" · ");
   byline.append(author, date);
   meta.append(avatar, byline);
   card.append(meta);
@@ -810,7 +821,9 @@ function bubbleComment(comment) {
   name.textContent = comment.author;
   author.append(avatar, name);
   const date = document.createElement("time");
-  date.textContent = formatDate(comment.created);
+  date.textContent = [formatDate(comment.created), comment.source_path]
+    .filter(Boolean)
+    .join(" · ");
   meta.append(author, date);
   item.append(meta);
 
@@ -952,7 +965,22 @@ function applyArticle(payload) {
   state.externalHash = "";
   state.dismissedExternalHash = "";
   hideExternalChange();
-  els.fileName.textContent = payload.name || payload.path;
+  const sourceCount = Array.isArray(payload.sources) ? payload.sources.length : 1;
+  const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+  els.fileName.textContent =
+    (payload.name || payload.path) +
+    (sourceCount > 1 ? " · " + sourceCount + " files" : "") +
+    (warnings.length
+      ? " · " + warnings.length + " warning" + (warnings.length === 1 ? "" : "s")
+      : "");
+  const sourcePaths = Array.isArray(payload.sources)
+    ? payload.sources.map((source) => source.path)
+    : [payload.path];
+  els.fileName.title = [
+    "Loaded LaTeX sources:",
+    ...sourcePaths,
+    ...(warnings.length ? ["", "Warnings:", ...warnings] : []),
+  ].join("\n");
   if (!state.author) {
     els.authorName.textContent = "Choose name";
     els.composerAuthor.textContent = "choose a name";
