@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>cool cool latex editor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="editor-app" id="editor-app">
+      <header class="topbar">
+        <div class="document-identity">
+          <a class="brand" href="/" aria-label="cool cool latex editor home">
+            <span class="brand-mark" aria-hidden="true">cc</span>
+            <span>cool cool latex editor</span>
+          </a>
+          <span class="header-rule" aria-hidden="true"></span>
+          <span class="file-name" id="file-name">proposal.tex</span>
+          <button class="author-button" id="author-button" type="button" title="Change your display name">
+            <span class="author-dot" aria-hidden="true"></span>
+            <span id="author-name">Choose name</span>
+          </button>
+        </div>
+
+        <nav class="header-actions" aria-label="Document actions">
+          <button class="text-button comments-button" id="comments-button" type="button">
+            Comments <span class="count-badge" id="comment-count">0</span>
+          </button>
+          <button class="text-button" id="overall-comment-button" type="button">Overall comment</button>
+          <button class="text-button display-button" id="display-button" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span id="display-label">Reading</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3 3 3-3" /></svg>
+          </button>
+          <button class="text-button" id="source-button" type="button">Source</button>
+          <button class="save-button" id="save-button" type="button">Saved</button>
+        </nav>
+      </header>
+
+      <section class="external-change-banner" id="external-change-banner" role="alert" hidden>
+        <span class="external-change-mark" aria-hidden="true">↻</span>
+        <div class="external-change-copy">
+          <strong>LaTeX changed on disk</strong>
+          <span id="external-change-message">Detected an update to the local file. Reload it?</span>
+        </div>
+        <div class="external-change-actions">
+          <button class="text-button" id="external-change-later" type="button">Later</button>
+          <button class="save-button" id="external-change-reload" type="button">Reload</button>
+        </div>
+      </section>
+
+      <main class="article-stage" id="article-stage">
+        <aside class="outline-rail" id="outline-rail" aria-label="Document outline">
+          <span class="outline-label">Outline</span>
+          <nav class="outline-list" id="outline-list"></nav>
+        </aside>
+        <article class="article-paper" id="article-content" aria-label="Editable article">
+          <div class="loading-state">
+            <span class="loading-line wide"></span>
+            <span class="loading-line medium"></span>
+            <span class="loading-line"></span>
+            <span class="loading-line"></span>
+          </div>
+        </article>
+        <aside class="bubble-rail" id="bubble-rail" aria-label="Visible comment bubbles"></aside>
+      </main>
+
+      <div class="display-menu" id="display-menu" role="menu" hidden>
+        <button type="button" role="menuitemradio" data-display-mode="reading" aria-checked="true">
+          <span>Reading</span>
+          <small>Clean article with margin markers</small>
+        </button>
+        <button type="button" role="menuitemradio" data-display-mode="bubbles" aria-checked="false">
+          <span>Bubbles</span>
+          <small>Show open comments beside the text</small>
+        </button>
+      </div>
+
+      <aside class="comment-drawer" id="comment-drawer" aria-label="Comments" aria-hidden="true">
+        <header class="drawer-header">
+          <div>
+            <span class="eyebrow" id="drawer-context">Document</span>
+            <h2>Comments</h2>
+          </div>
+          <button class="icon-button" id="drawer-close" type="button" aria-label="Close comments">×</button>
+        </header>
+
+        <nav class="drawer-tabs" aria-label="Comment scope">
+          <button type="button" data-comment-view="all" aria-selected="true">All</button>
+          <button type="button" data-comment-view="passage" aria-selected="false" disabled>This passage</button>
+          <button type="button" data-comment-view="overall" aria-selected="false">Overall</button>
+        </nav>
+
+        <div class="drawer-scroll">
+          <div class="comment-list" id="comment-list"></div>
+          <button class="addressed-toggle" id="addressed-toggle" type="button">
+            Show addressed <span id="addressed-count">0</span>
+          </button>
+        </div>
+
+        <form class="comment-composer" id="comment-form">
+          <blockquote class="composer-quote" id="composer-quote" hidden></blockquote>
+          <label for="comment-input" id="comment-label">Add an overall comment</label>
+          <textarea id="comment-input" rows="3" placeholder="Leave a note for the next revision…" required></textarea>
+          <div class="composer-footer">
+            <span>as <button id="composer-author" type="button">you</button></span>
+            <button class="send-button" type="submit">Comment</button>
+          </div>
+        </form>
+      </aside>
+
+      <button class="selection-comment" id="selection-comment" type="button" hidden>
+        <span aria-hidden="true">＋</span> Comment
+      </button>
+
+      <div class="context-menu" id="context-menu" role="menu" hidden>
+        <button type="button" role="menuitem" id="context-edit">
+          <span class="context-icon" aria-hidden="true">E</span>
+          <span id="context-edit-label">Edit selection</span>
+        </button>
+        <button type="button" role="menuitem" id="context-comment">
+          <span class="context-icon comment-icon" aria-hidden="true">C</span>
+          <span id="context-comment-label">Comment on selection</span>
+        </button>
+        <button type="button" role="menuitem" id="context-highlight" hidden>
+          <span class="context-icon highlight-icon" aria-hidden="true">H</span>
+          <span id="context-highlight-label">Highlight selection</span>
+        </button>
+        <p id="context-hint" hidden>Protected LaTeX can only be changed in Source.</p>
+      </div>
+
+      <form class="selection-editor" id="selection-editor" role="dialog" aria-labelledby="selection-editor-title" hidden>
+        <div class="selection-editor-heading">
+          <span id="selection-editor-title">Edit selection</span>
+          <button class="icon-button" id="selection-editor-close" type="button" aria-label="Close selection editor">×</button>
+        </div>
+        <textarea id="selection-edit-input" rows="3" aria-label="Replacement text" required></textarea>
+        <div class="selection-editor-actions">
+          <button class="text-button" id="selection-edit-cancel" type="button">Cancel</button>
+          <button class="save-button" id="selection-edit-apply" type="submit">Apply edit</button>
+        </div>
+      </form>
+
+      <dialog class="modal identity-modal" id="identity-dialog">
+        <form id="identity-form">
+          <div class="modal-topline">
+            <span class="eyebrow">Local profile</span>
+            <button class="icon-button" type="button" data-close-dialog="identity-dialog" aria-label="Close">×</button>
+          </div>
+          <h2>What should comments call you?</h2>
+          <p>Your name stays in this browser. Each new comment copies it into LaTeX, so authorship travels with Git.</p>
+          <label for="identity-input">Display name</label>
+          <input id="identity-input" maxlength="80" autocomplete="name" required />
+          <div class="modal-actions">
+            <button class="save-button" type="submit">Continue</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="modal source-modal" id="source-dialog">
+        <form id="source-form">
+          <div class="modal-topline">
+            <div>
+              <span class="eyebrow">Sole source of truth</span>
+              <h2>LaTeX source</h2>
+            </div>
+            <button class="icon-button" type="button" data-close-dialog="source-dialog" aria-label="Close">×</button>
+          </div>
+          <p class="source-note">Use this mode for structural or LaTeX-specific changes. The article view is generated from this file.</p>
+          <textarea id="source-editor" aria-label="LaTeX source" spellcheck="false"></textarea>
+          <div class="source-footer">
+            <a class="text-link" href="/api/export/clean">Download clean .tex</a>
+            <div class="modal-actions">
+              <button class="text-button" type="button" data-close-dialog="source-dialog">Cancel</button>
+              <button class="save-button" id="source-save" type="submit">Save source</button>
+            </div>
+          </div>
+        </form>
+      </dialog>
+
+      <div class="drawer-scrim" id="drawer-scrim"></div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

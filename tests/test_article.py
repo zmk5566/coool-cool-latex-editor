@@ -1,0 +1,184 @@
+import sys
+import unittest
+from pathlib import Path
+
+
+PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT))
+
+from cool_cool_latex_editor.article import (
+    add_article_comment,
+    add_article_highlight,
+    parse_article,
+    update_article_block,
+)
+from cool_cool_latex_editor.comments import parse_comments, parse_highlights
+
+
+BS = chr(92)
+SAMPLE = "\n".join(
+    [
+        BS + "documentclass{article}",
+        BS + "newcommand{" + BS + "judgment}{Alice}",
+        BS + "begin{document}",
+        BS + "begin{center}",
+        "{" + BS + "small PRELIMINARY PROPOSAL}" + BS + "par",
+        "{" + BS + "Large" + BS + "bfseries A Small Proposal}" + BS + "par",
+        "{" + BS + "large A readable subtitle}" + BS + "par",
+        BS + "end{center}",
+        "",
+        BS + "section*{First turn}",
+        "",
+        "Plain text with "
+        + BS
+        + "emph{protected emphasis}, $x "
+        + BS
+        + "vdash y$, and "
+        + BS
+        + "judgment{}.",
+        "",
+        BS + "begin{itemize}",
+        BS + "item One item",
+        BS + "end{itemize}",
+        BS + "end{document}",
+        "",
+    ]
+)
+
+
+class ArticleTests(unittest.TestCase):
+    def test_parses_semantic_blocks_without_latex_scaffolding(self):
+        blocks = parse_article(SAMPLE)
+
+        self.assertEqual(
+            [block.kind for block in blocks],
+            ["title", "subtitle", "heading", "paragraph", "list-item"],
+        )
+        self.assertEqual(blocks[0].runs[0]["text"], "A Small Proposal")
+        paragraph = blocks[3]
+        self.assertEqual(
+            [token.kind for token in paragraph.tokens],
+            ["emphasis", "formula", "formula"],
+        )
+        self.assertIn(
+            "Plain text with protected emphasis, x ⊢ y, and Alice; AI_Collar ⊢ 我 : Dog.",
+            "".join(str(run["text"]) for run in paragraph.runs),
+        )
+
+    def test_round_trip_edits_text_and_preserves_latex_tokens(self):
+        paragraph = parse_article(SAMPLE)[3]
+        updated = update_article_block(
+            SAMPLE,
+            paragraph.id,
+            [
+                {"type": "text", "value": "Revised & "},
+                {"type": "token", "index": 0},
+                {"type": "text", "value": " plus "},
+                {"type": "token", "index": 1},
+                {"type": "text", "value": " and "},
+                {"type": "token", "index": 2},
+                {"type": "text", "value": "."},
+            ],
+        )
+
+        expected = (
+            "Revised "
+            + BS
+            + "& "
+            + BS
+            + "emph{protected emphasis} plus $x "
+            + BS
+            + "vdash y$ and "
+            + BS
+            + "judgment{}."
+        )
+        self.assertIn(expected, updated)
+        reparsed = parse_article(updated)[3]
+        self.assertEqual(
+            [token.source for token in reparsed.tokens],
+            [
+                BS + "emph{protected emphasis}",
+                "$x " + BS + "vdash y$",
+                BS + "judgment{}",
+            ],
+        )
+
+    def test_rejects_removed_or_reordered_protected_tokens(self):
+        paragraph = parse_article(SAMPLE)[3]
+        with self.assertRaisesRegex(ValueError, "cannot be removed or reordered"):
+            update_article_block(
+                SAMPLE,
+                paragraph.id,
+                [{"type": "text", "value": "Only plain text remains."}],
+            )
+
+    def test_inline_comment_creates_stable_anchor_and_quote(self):
+        paragraph = parse_article(SAMPLE)[3]
+        updated = add_article_comment(
+            SAMPLE,
+            author="Alice",
+            body="Make this opening less report-like.",
+            scope="inline",
+            block_id=paragraph.id,
+            quote="Plain text with protected emphasis",
+            prefix="Before ",
+            suffix=", after",
+        )
+
+        anchored = parse_article(updated)[3]
+        self.assertTrue(anchored.id.startswith("ta-"))
+        self.assertEqual(anchored.comment_count, 1)
+        comment = parse_comments(updated)[0]
+        self.assertEqual(comment.target, anchored.id)
+        self.assertEqual(comment.quote, "Plain text with protected emphasis")
+        self.assertEqual(comment.prefix, "Before ")
+        self.assertEqual(comment.suffix, ", after")
+
+        edited = update_article_block(
+            updated,
+            anchored.id,
+            [
+                {"type": "text", "value": "A gentler opening with "},
+                {"type": "token", "index": 0},
+                {"type": "text", "value": ", "},
+                {"type": "token", "index": 1},
+                {"type": "text", "value": ", and "},
+                {"type": "token", "index": 2},
+                {"type": "text", "value": "."},
+            ],
+        )
+        self.assertEqual(parse_article(edited)[3].id, anchored.id)
+
+    def test_overall_comment_stays_out_of_article_blocks(self):
+        updated = add_article_comment(
+            SAMPLE,
+            author="Bob",
+            body="The overall shape works.",
+            scope="document",
+        )
+        self.assertEqual(len(parse_article(updated)), 5)
+        self.assertEqual(parse_comments(updated)[0].scope, "document")
+
+    def test_inline_highlight_creates_stable_anchor_and_metadata(self):
+        paragraph = parse_article(SAMPLE)[3]
+        updated = add_article_highlight(
+            SAMPLE,
+            author="Alice",
+            block_id=paragraph.id,
+            quote="protected emphasis",
+            prefix="Plain text with ",
+            suffix=", x ⊢ y",
+        )
+
+        anchored = parse_article(updated)[3]
+        highlight = parse_highlights(updated)[0]
+        self.assertTrue(anchored.id.startswith("ta-"))
+        self.assertEqual(highlight.target, anchored.id)
+        self.assertEqual(highlight.author, "Alice")
+        self.assertEqual(highlight.quote, "protected emphasis")
+        self.assertEqual(highlight.tone, "amber")
+        self.assertEqual(len(parse_article(updated)), 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

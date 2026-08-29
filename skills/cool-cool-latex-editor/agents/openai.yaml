@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cool Cool LaTeX Editor"
+  short_description: "Open and review local LaTeX manuscripts"
+  default_prompt: "Use $cool-cool-latex-editor to open this LaTeX manuscript for local review."
