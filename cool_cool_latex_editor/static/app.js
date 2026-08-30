@@ -337,6 +337,32 @@ function jumpToOutlineBlock(blockId) {
   });
 }
 
+function referenceDomId(key) {
+  return "reference-" + encodeURIComponent(key).replaceAll("%", "_");
+}
+
+function referencesForKeys(keys) {
+  if (!state.article || !Array.isArray(state.article.references)) return [];
+  const wanted = new Set(keys || []);
+  return state.article.references.filter((entry) => wanted.has(entry.key));
+}
+
+function jumpToReferences(keys) {
+  const entries = referencesForKeys(keys);
+  const rows = entries
+    .map((entry) => document.getElementById(referenceDomId(entry.key)))
+    .filter(Boolean);
+  if (!rows.length) return;
+  rows[0].scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block: "center",
+  });
+  for (const row of rows) row.classList.add("is-citation-target");
+  window.setTimeout(() => {
+    for (const row of rows) row.classList.remove("is-citation-target");
+  }, 2600);
+}
+
 function renderOutline() {
   if (!state.article) return;
   const structuralBlocks = state.article.blocks.filter((block) => {
@@ -359,12 +385,25 @@ function renderOutline() {
     button.addEventListener("click", () => jumpToOutlineBlock(block.id));
     return button;
   });
+  if (Array.isArray(state.article.references) && state.article.references.length) {
+    const references = document.createElement("button");
+    references.type = "button";
+    references.className = "outline-item is-level-1";
+    references.dataset.outlineBlockId = "__references__";
+    references.textContent = "References";
+    references.title = state.article.references.length + " cited references";
+    references.addEventListener("click", () => jumpToOutlineBlock("__references__"));
+    items.push(references);
+  }
   els.outlineList.replaceChildren(...items);
   window.requestAnimationFrame(updateOutlineActive);
 }
 
 function createToken(run, block, isEditing) {
-  const citationButton = run.kind === "citation" && isEditing;
+  const citedReferences = run.kind === "citation" && run.citation
+    ? referencesForKeys(run.citation.keys)
+    : [];
+  const citationButton = run.kind === "citation" && (isEditing || citedReferences.length);
   const token = document.createElement(citationButton ? "button" : "span");
   if (citationButton) token.type = "button";
   token.className = "protected-token " + run.kind;
@@ -375,11 +414,17 @@ function createToken(run, block, isEditing) {
   token.title = run.tooltip || "Protected LaTeX: edit in Source mode";
   if (run.kind === "citation") {
     token.classList.toggle("is-editable", isEditing);
-    token.tabIndex = isEditing ? 0 : -1;
-    token.setAttribute("role", isEditing ? "button" : "note");
+    token.classList.toggle("is-reference-link", !isEditing && citedReferences.length > 0);
+    token.tabIndex = citationButton ? 0 : -1;
+    token.setAttribute("role", citationButton ? "button" : "note");
+    const referenceNumbers = citedReferences.map((entry) => `[${entry.index}]`).join(", ");
     token.setAttribute(
       "aria-label",
-      isEditing ? "Edit citation " + run.text : "Citation " + run.text
+      isEditing
+        ? "Edit citation " + run.text
+        : referenceNumbers
+          ? "View references " + referenceNumbers + " for citation " + run.text
+          : "Citation " + run.text
     );
     if (isEditing) {
       token.title = "Edit citation and referenced BibTeX fields";
@@ -391,6 +436,17 @@ function createToken(run, block, isEditing) {
       token.addEventListener("click", open);
       token.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") open(event);
+      });
+    } else if (citedReferences.length) {
+      token.title = run.tooltip + "\nReferences " + referenceNumbers;
+      const jump = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        jumpToReferences(run.citation.keys);
+      };
+      token.addEventListener("click", jump);
+      token.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") jump(event);
       });
     }
   }
@@ -635,12 +691,105 @@ function renderBlock(block) {
   return row;
 }
 
+function appendReferencePart(container, text, className = "") {
+  if (!text) return;
+  const span = document.createElement("span");
+  if (className) span.className = className;
+  span.textContent = text;
+  container.append(span);
+}
+
+function renderReferenceEntry(entry) {
+  const item = document.createElement("li");
+  item.className = "reference-entry" + (entry.missing ? " is-missing" : "");
+  item.id = referenceDomId(entry.key);
+  item.dataset.referenceKey = entry.key;
+  item.title = "BibTeX key: " + entry.key;
+
+  const number = document.createElement("span");
+  number.className = "reference-number";
+  number.textContent = `[${entry.index}]`;
+  number.setAttribute("aria-hidden", "true");
+
+  const body = document.createElement("div");
+  body.className = "reference-body";
+  if (entry.missing) {
+    appendReferencePart(body, entry.key + ". ", "reference-authors");
+    appendReferencePart(body, "BibTeX entry not found.", "reference-missing-note");
+  } else {
+    appendReferencePart(body, (entry.authors || entry.key) + ". ", "reference-authors");
+    appendReferencePart(body, (entry.year || "n.d.") + ". ", "reference-year");
+    appendReferencePart(body, (entry.reference_title || entry.key) + ". ", "reference-title");
+    if (entry.venue) {
+      appendReferencePart(
+        body,
+        (entry.entry_type === "inproceedings" ? "In " : "") + entry.venue,
+        "reference-venue"
+      );
+      const volumeIssue = entry.volume
+        ? " " + entry.volume + (entry.issue ? `, ${entry.issue}` : "")
+        : entry.issue
+          ? " " + entry.issue
+          : "";
+      appendReferencePart(body, volumeIssue + ". ");
+    }
+    const publication = [entry.publisher, entry.address].filter(Boolean).join(", ");
+    appendReferencePart(body, publication ? publication + ". " : "");
+    if (entry.article_number) {
+      appendReferencePart(body, "Article " + entry.article_number + ". ");
+    }
+    appendReferencePart(body, entry.pages ? entry.pages + ". " : "");
+    if (entry.doi || entry.url) {
+      const link = document.createElement("a");
+      link.className = "reference-link";
+      const doi = entry.doi
+        ? entry.doi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+        : "";
+      link.href = doi ? "https://doi.org/" + doi : entry.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = doi ? "https://doi.org/" + doi : entry.url;
+      body.append(link);
+    }
+  }
+
+  item.append(number, body);
+  return item;
+}
+
+function renderReferences() {
+  const references = state.article && Array.isArray(state.article.references)
+    ? state.article.references
+    : [];
+  if (!references.length) return null;
+  const section = document.createElement("section");
+  section.className = "references-section article-block";
+  section.dataset.blockId = "__references__";
+  section.id = "references";
+  section.setAttribute("aria-labelledby", "references-title");
+
+  const heading = document.createElement("h2");
+  heading.id = "references-title";
+  heading.textContent = "References";
+  const count = document.createElement("span");
+  count.className = "references-count";
+  count.textContent = references.length + (references.length === 1 ? " cited work" : " cited works");
+  const list = document.createElement("ol");
+  list.className = "references-list";
+  list.setAttribute("aria-label", "ACM-style cited references");
+  list.replaceChildren(...references.map(renderReferenceEntry));
+  section.append(heading, count, list);
+  return section;
+}
+
 function renderArticle() {
   if (!state.article) return;
   const fragment = document.createDocumentFragment();
   for (const block of state.article.blocks) {
     fragment.append(renderBlock(block));
   }
+  const references = renderReferences();
+  if (references) fragment.append(references);
   els.article.replaceChildren(fragment);
   renderOutline();
   window.requestAnimationFrame(() => {

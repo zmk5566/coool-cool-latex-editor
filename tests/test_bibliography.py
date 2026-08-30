@@ -19,6 +19,9 @@ class BibliographyTests(unittest.TestCase):
   author = {Greenberg, Saul and Fitchett, Chester},
   title = {Phidgets: Easy Development of {Physical Interfaces}},
   year = {2001},
+  booktitle = {Proceedings of the 14th Annual ACM Symposium on User Interface Software and Technology},
+  pages = {209--218},
+  doi = {10.1145/502348.502388},
 }
 @article{villar2011gadgeteer,
   author = "Villar, Nicolas and Scott, James and Hodges, Steve",
@@ -32,6 +35,12 @@ class BibliographyTests(unittest.TestCase):
         self.assertEqual(entries["greenberg2001phidgets"].label, "Greenberg & Fitchett, 2001")
         self.assertEqual(entries["villar2011gadgeteer"].label, "Villar et al., 2011")
         self.assertIn("Physical Interfaces", entries["greenberg2001phidgets"].tooltip)
+        reference = entries["greenberg2001phidgets"].public_dict()
+        self.assertEqual(reference["authors"], "Saul Greenberg and Chester Fitchett")
+        self.assertEqual(reference["reference_title"], "Phidgets: Easy Development of Physical Interfaces")
+        self.assertIn("ACM Symposium", reference["venue"])
+        self.assertEqual(reference["pages"], "209–218")
+        self.assertEqual(reference["doi"], "10.1145/502348.502388")
 
     def test_updates_selected_fields_without_reformatting_the_entry(self):
         source = """@article{sample,

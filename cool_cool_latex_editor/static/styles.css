@@ -578,18 +578,37 @@ button {
   white-space: normal;
 }
 
+button.protected-token.citation {
+  display: inline;
+  margin: 0;
+  border: 0;
+  appearance: none;
+}
+
 .protected-token.citation.is-unresolved {
   color: #8a4f42;
   background: #fbefeb;
 }
 
 .protected-token.citation.is-editable {
-  display: inline;
-  margin: 0;
-  border: 0;
-  appearance: none;
   cursor: pointer;
   box-shadow: 0 0 0 1px rgba(66, 96, 113, 0.16);
+}
+
+.protected-token.citation.is-reference-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition: color 140ms ease, background-color 140ms ease, text-decoration-color 140ms ease;
+}
+
+.protected-token.citation.is-reference-link:hover,
+.protected-token.citation.is-reference-link:focus-visible {
+  color: #244b60;
+  background: #e7f0f3;
+  text-decoration-color: #8da8b5;
+  outline: none;
 }
 
 .protected-token.citation.is-editable:hover,
@@ -609,6 +628,93 @@ button {
 
 .is-editing .protected-token {
   box-shadow: 0 0 0 1px rgba(183, 122, 31, 0.35);
+}
+
+.references-section {
+  margin-top: 74px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line-strong);
+  scroll-margin-top: calc(var(--header-height) + 28px);
+}
+
+.references-section h2 {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 550;
+  letter-spacing: -0.024em;
+  line-height: 1.3;
+}
+
+.references-count {
+  display: block;
+  margin-top: 5px;
+  color: var(--faint);
+  font-family: var(--ui);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.references-list {
+  display: grid;
+  gap: 15px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reference-entry {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  margin: 0;
+  border-radius: 4px;
+  scroll-margin-top: calc(var(--header-height) + 56px);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.reference-entry.is-citation-target {
+  background: #f7f3ea;
+  box-shadow: 0 0 0 7px #f7f3ea;
+}
+
+.reference-number {
+  padding-top: 0.05em;
+  color: #625e56;
+  font-family: var(--ui);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reference-body {
+  color: #393733;
+  font-size: 14px;
+  line-height: 1.58;
+  overflow-wrap: anywhere;
+}
+
+.reference-authors {
+  color: var(--ink);
+}
+
+.reference-venue {
+  font-style: italic;
+}
+
+.reference-link {
+  color: #456678;
+  text-decoration-color: #b9c7cd;
+  text-underline-offset: 2px;
+}
+
+.reference-link:hover {
+  color: #244b60;
+}
+
+.reference-entry.is-missing .reference-body,
+.reference-missing-note {
+  color: var(--danger);
 }
 
 .comment-marker {

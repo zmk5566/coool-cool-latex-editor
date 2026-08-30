@@ -153,7 +153,15 @@ class ServerTests(unittest.TestCase):
             "@inproceedings{greenberg2001phidgets,\n"
             "  author={Greenberg, Saul and Fitchett, Chester},\n"
             "  title={Phidgets},\n"
-            "  year={2001}\n"
+            "  booktitle={Proceedings of the ACM Symposium},\n"
+            "  year={2001},\n"
+            "  pages={209--218},\n"
+            "  doi={10.1145/502348.502388}\n"
+            "}\n"
+            "@article{uncited2026,\n"
+            "  author={Unused, Alice},\n"
+            "  title={Not in the rendered list},\n"
+            "  year={2026}\n"
             "}\n",
             encoding="utf-8",
         )
@@ -176,6 +184,14 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(citation["text"], "(Greenberg & Fitchett, 2001)")
         self.assertIn("Phidgets", citation["tooltip"])
         self.assertEqual(len(article["sources"]), 2)
+        self.assertEqual(len(article["references"]), 1)
+        reference = article["references"][0]
+        self.assertEqual(reference["index"], 1)
+        self.assertEqual(reference["key"], "greenberg2001phidgets")
+        self.assertEqual(reference["authors"], "Saul Greenberg and Chester Fitchett")
+        self.assertEqual(reference["venue"], "Proceedings of the ACM Symposium")
+        self.assertEqual(reference["pages"], "209–218")
+        self.assertEqual(reference["doi"], "10.1145/502348.502388")
 
         paragraph = article["blocks"][2]
         segments = [

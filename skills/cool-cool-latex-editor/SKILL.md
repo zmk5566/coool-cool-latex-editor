@@ -41,6 +41,7 @@ Prefer `pipx`; use a project virtual environment or ordinary `pip` only when tha
 - In a multi-file project, each article block retains its source path. Paragraph edits, inline comments, and highlights write back to that file; overall comments belong to the main entry file.
 - Paragraph edits preserve protected LaTeX tokens. In paragraph edit mode, a citation token is a separate button: use it to edit the cite command, options, comma-separated keys, and the author, year, or title of referenced BibTeX entries. Those changes write to the owning `.tex` and `.bib` files together.
 - The article view keeps the document title and an explicit **Abstract** heading. Citations continue to render as author-year labels with reference details on hover after their source fields are edited.
+- When cited BibTeX entries are loaded, the article ends with a numbered ACM-style **References** section containing cited works only. In reading mode, citation buttons jump to and briefly highlight their matching entries; this rendered list does not create or modify LaTeX source.
 - **Source** mode follows the active or most recently outlined passage to its owning TeX file and exact line. Its file picker can switch among all recursively loaded sources. Use it for structural or LaTeX-specific changes.
 - Passage comments, overall comments, anchors, and highlights are stored as TeX comments and do not render into normal PDF output.
 - **Reading** is quiet; **Bubbles** shows open discussions beside their text on wide screens.

@@ -10,6 +10,7 @@
 - 递归读取静态 `\\input{...}` 和 `\\include{...}`，包括被引用文件继续引用的更深层文件。
 - 在文章视图中保留论文标题，并明确显示 “Abstract” 标题。
 - 把 BibTeX citation 显示为作者–年份标签，悬停可查看完整条目。进入段落编辑后，点击引用即可修改 cite 命令、options、keys，以及对应 BibTeX 条目的 author、year 和 title。
+- 在文章末尾生成带编号、接近 ACM 排版的 **References**，只列正文实际引用的条目；阅读模式点击 citation 会跳到对应参考文献。
 - 点击段落即可小范围修改，同时保护公式、强调、链接等 LaTeX 结构。
 - 选中文字可以添加段落评论、全文评论和仅供编辑使用的高亮。
 - 评论与高亮以 TeX comment 保存，因此不会进入正常的 LaTeX 或 PDF 输出。
@@ -150,4 +151,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-当前版本：`0.3.0`
+当前版本：`0.4.0`

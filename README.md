@@ -10,6 +10,7 @@ A lightweight, local, Git-native writing and review interface for LaTeX manuscri
 - Recursively follows static `\\input{...}` and `\\include{...}` references, including references from already included files.
 - Keeps the document title and an explicit Abstract heading in the article view.
 - Resolves BibTeX citations into author-year labels with full-reference hover text. In paragraph edit mode, click a citation to edit its command, options, keys, and the referenced BibTeX author, year, and title fields.
+- Appends the cited bibliography as a numbered, ACM-style **References** section. Clicking a citation in reading mode jumps to its matching entry; uncited BibTeX records stay out of the list.
 - Lets you click a paragraph for a focused edit while protecting formulas, emphasis, links, and other LaTeX structures.
 - Adds passage comments, document-level comments, and editor-only highlights from a text selection.
 - Stores annotations as TeX comments, so they do not appear in normal LaTeX or PDF output.
@@ -150,4 +151,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-Current version: `0.3.0`
+Current version: `0.4.0`

@@ -73,12 +73,37 @@ def _surname(author: str) -> str:
     return words[-1]
 
 
+def _reference_name(author: str) -> str:
+    author = _plain_text(author)
+    if not author:
+        return ""
+    parts = [part.strip() for part in author.split(",") if part.strip()]
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[1]} {parts[0]}"
+    suffixes = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"}
+    if parts[-1].lower() in suffixes:
+        return f"{parts[1]} {parts[0]}, {parts[-1]}"
+    return f"{parts[-1]} {parts[0]}, {parts[1]}"
+
+
 @dataclass(frozen=True)
 class BibliographyEntry:
     key: str
+    entry_type: str = ""
     author: str = ""
     year: str = ""
     title: str = ""
+    venue: str = ""
+    publisher: str = ""
+    address: str = ""
+    volume: str = ""
+    issue: str = ""
+    pages: str = ""
+    article_number: str = ""
+    doi: str = ""
+    url: str = ""
     source_path: str = ""
 
     @property
@@ -114,12 +139,37 @@ class BibliographyEntry:
             details += f". {_plain_text(self.title)}"
         return f"{self.key} — {details}"
 
+    @property
+    def reference_authors(self) -> str:
+        authors = [item.strip() for item in re.split(r"\s+and\s+", self.author) if item.strip()]
+        names = [_reference_name(item) for item in authors]
+        names = [name for name in names if name]
+        if not names:
+            return self.key
+        if len(names) == 1:
+            return names[0]
+        if len(names) == 2:
+            return f"{names[0]} and {names[1]}"
+        return ", ".join(names[:-1]) + f", and {names[-1]}"
+
     def public_dict(self) -> Dict[str, str]:
         return {
             "key": self.key,
+            "entry_type": self.entry_type,
             "author": self.author,
+            "authors": self.reference_authors,
             "year": self.year,
             "title": self.title,
+            "reference_title": _plain_text(self.title),
+            "venue": _plain_text(self.venue),
+            "publisher": _plain_text(self.publisher),
+            "address": _plain_text(self.address),
+            "volume": _plain_text(self.volume),
+            "issue": _plain_text(self.issue),
+            "pages": _plain_text(self.pages).replace("--", "–"),
+            "article_number": _plain_text(self.article_number),
+            "doi": _plain_text(self.doi),
+            "url": _plain_text(self.url),
             "source_path": self.source_path,
             "label": self.label,
             "tooltip": self.tooltip,
@@ -210,11 +260,25 @@ def parse_bibtex(source: str, *, source_path: str = "") -> Dict[str, Bibliograph
         if record.kind in {"comment", "preamble", "string"}:
             continue
         fields = record.fields
+
+        def value(name: str) -> str:
+            return fields[name].value if name in fields else ""
+
         entries[key] = BibliographyEntry(
             key=key,
-            author=fields["author"].value if "author" in fields else "",
-            year=fields["year"].value if "year" in fields else "",
-            title=fields["title"].value if "title" in fields else "",
+            entry_type=record.kind,
+            author=value("author"),
+            year=value("year"),
+            title=value("title"),
+            venue=value("booktitle") or value("journal") or value("howpublished"),
+            publisher=value("publisher") or value("organization"),
+            address=value("address") or value("location"),
+            volume=value("volume"),
+            issue=value("number"),
+            pages=value("pages"),
+            article_number=value("articleno"),
+            doi=value("doi"),
+            url=value("url"),
             source_path=source_path,
         )
     return entries

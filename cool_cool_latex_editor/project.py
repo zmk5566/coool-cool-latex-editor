@@ -133,6 +133,39 @@ class LatexProject:
     def bibliography_payloads(self) -> List[Dict[str, str]]:
         return [self.bibliography[key].public_dict() for key in sorted(self.bibliography)]
 
+    def references_payloads(self) -> List[Dict[str, object]]:
+        if not self.bibliography_sources:
+            return []
+        cited_keys = {
+            key
+            for project_block in self.blocks
+            for token in project_block.block.tokens
+            if token.kind == "citation"
+            for key in token.citation_keys
+        }
+        ordered_keys = sorted(
+            cited_keys,
+            key=lambda key: (
+                self.bibliography[key].author_label.casefold(),
+                self.bibliography[key].year.casefold(),
+                self.bibliography[key].title.casefold(),
+                key.casefold(),
+            )
+            if key in self.bibliography
+            else ("\uffff", "", "", key.casefold()),
+        )
+        result: List[Dict[str, object]] = []
+        for index, key in enumerate(ordered_keys, start=1):
+            entry = self.bibliography.get(key)
+            data: Dict[str, object]
+            if entry is None:
+                data = {"key": key, "missing": True}
+            else:
+                data = entry.public_dict()
+            data["index"] = index
+            result.append(data)
+        return result
+
     def source(self, relative_path: str) -> ProjectSource:
         try:
             return self.sources[relative_path]
