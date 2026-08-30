@@ -50,6 +50,18 @@ MACRO_DEFINITION_RE = re.compile(
     r"\\(?:newcommand|renewcommand)\s*\{\\(?P<name>[A-Za-z@]+)\}\s*"
     r"(?:\[(?P<arguments>\d+)\])?\s*\{"
 )
+CITATION_COMMANDS = {
+    "cite",
+    "citep",
+    "citet",
+    "citeauthor",
+    "citeyear",
+    "parencite",
+    "textcite",
+    "autocite",
+}
+CITATION_KEY_RE = re.compile(r"^[A-Za-z0-9_.:/+\-]+$")
+CITATION_OPTIONS_RE = re.compile(r"^(?:\[[^\[\]]*\])*$")
 
 
 @dataclass(frozen=True)
@@ -58,8 +70,13 @@ class ArticleToken:
     source: str
     text: str
     kind: str
+    start: int
+    end: int
     tooltip: Optional[str] = None
     unresolved: bool = False
+    citation_command: Optional[str] = None
+    citation_options: str = ""
+    citation_keys: Tuple[str, ...] = ()
 
     def public_dict(self) -> Dict[str, object]:
         result: Dict[str, object] = {
@@ -71,6 +88,12 @@ class ArticleToken:
             result["tooltip"] = self.tooltip
         if self.unresolved:
             result["unresolved"] = True
+        if self.kind == "citation" and self.citation_command:
+            result["citation"] = {
+                "command": self.citation_command,
+                "options": self.citation_options,
+                "keys": list(self.citation_keys),
+            }
         return result
 
 
@@ -257,6 +280,9 @@ def tokenize_inline(
         kind = "latex"
         tooltip: Optional[str] = None
         unresolved = False
+        citation_command: Optional[str] = None
+        citation_options = ""
+        citation_keys: Tuple[str, ...] = ()
         end = match.end()
         marker = match.group(0)
 
@@ -284,9 +310,11 @@ def tokenize_inline(
                 cursor = match.end()
                 continue
             keys = [key.strip() for key in legacy_match.group("keys").split(",") if key.strip()]
-            raw = f"\\{legacy_match.group('command')}{{{','.join(keys)}}}"
+            citation_command = legacy_match.group("command")
+            citation_keys = tuple(keys)
+            raw = f"\\{citation_command}{{{','.join(keys)}}}"
             display, tooltip, unresolved = _citation_display(
-                legacy_match.group("command"), keys, bibliography
+                citation_command, keys, bibliography
             )
             tooltip = "Legacy escaped citation; saving this paragraph repairs it.\n" + tooltip
             kind = "citation"
@@ -301,8 +329,11 @@ def tokenize_inline(
                 break
             raw = source[match.start() : closing + 1]
             keys = [key.strip() for key in source[match.end() : closing].split(",") if key.strip()]
+            citation_command = command_match.group("command")
+            citation_options = marker[command_match.end() :].rsplit("{", 1)[0].strip()
+            citation_keys = tuple(keys)
             display, tooltip, unresolved = _citation_display(
-                command_match.group("command"), keys, bibliography
+                citation_command, keys, bibliography
             )
             kind = "citation"
             end = closing + 1
@@ -330,8 +361,13 @@ def tokenize_inline(
             source=raw,
             text=display,
             kind=kind,
+            start=match.start(),
+            end=end,
             tooltip=tooltip,
             unresolved=unresolved,
+            citation_command=citation_command,
+            citation_options=citation_options,
+            citation_keys=citation_keys,
         )
         tokens.append(token)
         runs.append({"type": "token", **token.public_dict()})
@@ -700,6 +736,50 @@ def serialize_segments(block: ArticleBlock, segments: Iterable[Dict[str, object]
     if block.kind in {"title", "subtitle", "heading"}:
         updated = re.sub(r"\s*\n\s*", " ", updated)
     return updated
+
+
+def update_article_citation(
+    source: str,
+    block_id: str,
+    token_index: int,
+    *,
+    command: str,
+    options: str,
+    keys: Sequence[str],
+    allow_fragment: bool = False,
+    bibliography: Optional[Mapping[str, BibliographyEntry]] = None,
+    macros: Optional[Mapping[str, str]] = None,
+) -> str:
+    block = article_block(
+        source,
+        block_id,
+        allow_fragment=allow_fragment,
+        bibliography=bibliography,
+        macros=macros,
+    )
+    try:
+        token = block.tokens[token_index]
+    except (IndexError, TypeError) as exc:
+        raise ValueError("That citation no longer exists. Reload and try again.") from exc
+    if token.kind != "citation":
+        raise ValueError("The selected LaTeX token is not a citation.")
+
+    command = command.strip()
+    options = options.strip()
+    normalized_keys = [str(key).strip() for key in keys if str(key).strip()]
+    if command not in CITATION_COMMANDS:
+        raise ValueError(f"Unsupported citation command: {command}")
+    if options and not CITATION_OPTIONS_RE.fullmatch(options):
+        raise ValueError("Citation options must use balanced square brackets.")
+    if not normalized_keys:
+        raise ValueError("A citation must contain at least one BibTeX key.")
+    if any(not CITATION_KEY_RE.fullmatch(key) for key in normalized_keys):
+        raise ValueError("Citation keys contain unsupported characters.")
+
+    replacement = f"\\{command}{options}{{{','.join(normalized_keys)}}}"
+    start = block.content_start + token.start
+    end = block.content_start + token.end
+    return source[:start] + replacement + source[end:]
 
 
 def update_article_block(

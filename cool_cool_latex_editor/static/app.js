@@ -26,7 +26,13 @@ const state = {
   outlineActiveBlockId: null,
   showAddressed: false,
   sourceHash: "",
+  sourcePath: "",
+  sourceLine: 1,
   sourceDirty: false,
+  citationBlockId: null,
+  citationTokenIndex: null,
+  citationBibDraft: {},
+  citationDirty: false,
   saving: false,
   externalHash: "",
   dismissedExternalHash: "",
@@ -83,8 +89,19 @@ const els = {
   identityDialog: $("#identity-dialog"),
   identityForm: $("#identity-form"),
   identityInput: $("#identity-input"),
+  citationDialog: $("#citation-dialog"),
+  citationForm: $("#citation-form"),
+  citationLocation: $("#citation-location"),
+  citationCommand: $("#citation-command"),
+  citationOptions: $("#citation-options"),
+  citationKeys: $("#citation-keys"),
+  citationSave: $("#citation-save"),
+  bibEditorCount: $("#bib-editor-count"),
+  bibEditorList: $("#bib-editor-list"),
   sourceDialog: $("#source-dialog"),
   sourceForm: $("#source-form"),
+  sourceFileSelect: $("#source-file-select"),
+  sourceLocation: $("#source-location"),
   sourceEditor: $("#source-editor"),
   sourceSave: $("#source-save"),
   externalChangeBanner: $("#external-change-banner"),
@@ -146,7 +163,7 @@ function setDirty(dirty) {
 }
 
 function hasUnsavedChanges() {
-  return state.dirty || state.sourceDirty;
+  return state.dirty || state.sourceDirty || state.citationDirty;
 }
 
 function updateBeforeUnload() {
@@ -212,8 +229,10 @@ async function reloadExternalChange() {
     state.selectionRange = null;
     state.selectedHighlightId = null;
     state.sourceDirty = false;
+    state.citationDirty = false;
     updateBeforeUnload();
     if (els.sourceDialog.open) els.sourceDialog.close();
+    if (els.citationDialog.open) els.citationDialog.close();
     applyArticle(payload);
     showToast("Reloaded the latest LaTeX from disk.");
   } catch (error) {
@@ -344,21 +363,44 @@ function renderOutline() {
   window.requestAnimationFrame(updateOutlineActive);
 }
 
-function createToken(run) {
-  const token = document.createElement("span");
+function createToken(run, block, isEditing) {
+  const citationButton = run.kind === "citation" && isEditing;
+  const token = document.createElement(citationButton ? "button" : "span");
+  if (citationButton) token.type = "button";
   token.className = "protected-token " + run.kind;
   if (run.unresolved) token.classList.add("is-unresolved");
   token.dataset.tokenIndex = String(run.index);
   token.contentEditable = "false";
   token.textContent = run.text;
   token.title = run.tooltip || "Protected LaTeX: edit in Source mode";
+  if (run.kind === "citation") {
+    token.classList.toggle("is-editable", isEditing);
+    token.tabIndex = isEditing ? 0 : -1;
+    token.setAttribute("role", isEditing ? "button" : "note");
+    token.setAttribute(
+      "aria-label",
+      isEditing ? "Edit citation " + run.text : "Citation " + run.text
+    );
+    if (isEditing) {
+      token.title = "Edit citation and referenced BibTeX fields";
+      const open = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openCitationEditor(block.id, run.index);
+      };
+      token.addEventListener("click", open);
+      token.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") open(event);
+      });
+    }
+  }
   return token;
 }
 
-function fillRuns(container, block) {
+function fillRuns(container, block, isEditing) {
   for (const run of block.runs) {
     if (run.type === "token") {
-      container.append(createToken(run));
+      container.append(createToken(run, block, isEditing));
     } else {
       container.append(document.createTextNode(run.text));
     }
@@ -520,9 +562,8 @@ function renderBlock(block) {
     (canEdit ? "Edit " : "Read ") + block.kind + " in " + sourceLocation
   );
   content.title = "Source: " + sourceLocation;
-  fillRuns(content, block);
-
   const isEditing = canEdit && state.activeBlockId === block.id;
+  fillRuns(content, block, isEditing);
   if (isEditing) {
     row.classList.add("is-editing");
     content.contentEditable = "true";
@@ -1322,17 +1363,229 @@ async function toggleSelectionHighlight() {
   }
 }
 
+function blockById(blockId) {
+  if (!state.article || !blockId) return null;
+  return state.article.blocks.find((block) => block.id === blockId) || null;
+}
+
+function bibliographyByKey(key) {
+  if (!state.article || !Array.isArray(state.article.bibliography)) return null;
+  return state.article.bibliography.find((entry) => entry.key === key) || null;
+}
+
+function parsedCitationKeys() {
+  return els.citationKeys.value
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+}
+
+function syncBibDraftFromForm() {
+  for (const card of $$(".bib-entry-card[data-bib-key]", els.bibEditorList)) {
+    const key = card.dataset.bibKey;
+    state.citationBibDraft[key] = {
+      key,
+      author: $("[data-bib-field='author']", card).value,
+      year: $("[data-bib-field='year']", card).value,
+      title: $("[data-bib-field='title']", card).value,
+    };
+  }
+}
+
+function bibField(labelText, field, value, { wide = false } = {}) {
+  const label = document.createElement("label");
+  if (wide) label.className = "is-wide";
+  const caption = document.createElement("span");
+  caption.textContent = labelText;
+  const input = document.createElement(field === "title" ? "textarea" : "input");
+  input.dataset.bibField = field;
+  input.value = value || "";
+  if (input.tagName === "TEXTAREA") input.rows = 2;
+  label.append(caption, input);
+  return label;
+}
+
+function renderBibEditor() {
+  const keys = parsedCitationKeys();
+  const cards = keys.map((key) => {
+    const entry = bibliographyByKey(key);
+    if (!entry) {
+      const missing = document.createElement("article");
+      missing.className = "bib-entry-card is-missing";
+      const title = document.createElement("strong");
+      title.textContent = key;
+      const detail = document.createElement("span");
+      detail.textContent = "No loaded BibTeX entry. The citation can still be saved as unresolved.";
+      missing.append(title, detail);
+      return missing;
+    }
+    if (!state.citationBibDraft[key]) {
+      state.citationBibDraft[key] = {
+        key,
+        author: entry.author || "",
+        year: entry.year || "",
+        title: entry.title || "",
+      };
+    }
+    const draft = state.citationBibDraft[key];
+    const card = document.createElement("article");
+    card.className = "bib-entry-card";
+    card.dataset.bibKey = key;
+    const header = document.createElement("header");
+    const name = document.createElement("strong");
+    name.textContent = key;
+    const path = document.createElement("span");
+    path.textContent = entry.source_path || ".bib";
+    header.append(name, path);
+    const fields = document.createElement("div");
+    fields.className = "bib-entry-fields";
+    fields.append(
+      bibField("Author", "author", draft.author, { wide: true }),
+      bibField("Year", "year", draft.year),
+      bibField("Title", "title", draft.title, { wide: true })
+    );
+    card.append(header, fields);
+    return card;
+  });
+  const resolvedCount = cards.filter((card) => !card.classList.contains("is-missing")).length;
+  els.bibEditorCount.textContent = resolvedCount + " / " + keys.length + " resolved";
+  els.bibEditorList.replaceChildren(...cards);
+}
+
+function openCitationEditor(blockId, tokenIndex) {
+  if (state.dirty) {
+    showToast("Save the paragraph text before editing its citation.", true);
+    return;
+  }
+  const block = blockById(blockId);
+  const run = block && block.runs.find(
+    (item) => item.type === "token" && item.index === tokenIndex
+  );
+  if (!block || !run || !run.citation) {
+    showToast("That citation is no longer available. Reload and try again.", true);
+    return;
+  }
+  state.citationBlockId = blockId;
+  state.citationTokenIndex = tokenIndex;
+  state.citationBibDraft = {};
+  state.citationDirty = false;
+  els.citationCommand.value = run.citation.command;
+  els.citationOptions.value = run.citation.options || "";
+  els.citationKeys.value = run.citation.keys.join(", ");
+  els.citationLocation.textContent =
+    (block.source_path || state.article.path) + ":" + block.line_start;
+  renderBibEditor();
+  updateBeforeUnload();
+  els.citationDialog.showModal();
+  window.setTimeout(() => els.citationKeys.focus(), 0);
+}
+
+async function saveCitation() {
+  if (!state.article || state.saving) return;
+  syncBibDraftFromForm();
+  const keys = parsedCitationKeys();
+  const bibliography = keys
+    .filter((key) => bibliographyByKey(key) && state.citationBibDraft[key])
+    .map((key) => state.citationBibDraft[key]);
+  const originalBlock = blockById(state.citationBlockId);
+  state.saving = true;
+  setBusy(els.citationSave, true);
+  try {
+    const payload = await api("/api/article/citation", {
+      method: "PUT",
+      body: JSON.stringify({
+        block_id: state.citationBlockId,
+        token_index: state.citationTokenIndex,
+        command: els.citationCommand.value,
+        options: els.citationOptions.value,
+        keys,
+        bibliography,
+        expected_hash: state.article.hash,
+      }),
+    });
+    const nextBlock = originalBlock
+      ? payload.blocks.find(
+          (block) =>
+            block.source_path === originalBlock.source_path &&
+            block.line_start === originalBlock.line_start &&
+            block.kind === originalBlock.kind
+        )
+      : null;
+    state.citationDirty = false;
+    state.activeBlockId = nextBlock ? nextBlock.id : null;
+    els.citationDialog.close();
+    updateBeforeUnload();
+    applyArticle(payload);
+    if (nextBlock) focusEditingBlock(nextBlock.id);
+    showToast("Citation and BibTeX fields saved.");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.saving = false;
+    setBusy(els.citationSave, false);
+  }
+}
+
+function sourceTargetBlock() {
+  return (
+    blockById(state.activeBlockId) ||
+    blockById(state.outlineActiveBlockId) ||
+    blockById(state.contextBlockId)
+  );
+}
+
+function populateSourceFiles(selectedPath) {
+  const sources = state.article && Array.isArray(state.article.sources)
+    ? state.article.sources
+    : [];
+  const options = sources.map((source) => {
+    const option = document.createElement("option");
+    option.value = source.path;
+    option.textContent = source.path;
+    return option;
+  });
+  els.sourceFileSelect.replaceChildren(...options);
+  els.sourceFileSelect.value = selectedPath;
+}
+
+function focusSourceLine(line) {
+  const safeLine = Math.max(1, Number(line) || 1);
+  const lines = els.sourceEditor.value.split("\n");
+  const offset = lines.slice(0, safeLine - 1).reduce((total, value) => total + value.length + 1, 0);
+  els.sourceEditor.focus();
+  els.sourceEditor.setSelectionRange(offset, offset);
+  const lineHeight = parseFloat(getComputedStyle(els.sourceEditor).lineHeight) || 19;
+  els.sourceEditor.scrollTop = Math.max(0, (safeLine - 1) * lineHeight - els.sourceEditor.clientHeight * 0.3);
+}
+
+async function loadSourceFile(path, line = 1) {
+  const payload = await api("/api/source?path=" + encodeURIComponent(path));
+  state.sourceHash = payload.hash;
+  state.sourcePath = payload.path;
+  state.sourceLine = Math.max(1, Number(line) || 1);
+  state.sourceDirty = false;
+  els.sourceEditor.value = payload.content;
+  els.sourceFileSelect.value = payload.path;
+  els.sourceLocation.textContent = payload.path + " · line " + state.sourceLine;
+  updateBeforeUnload();
+  window.setTimeout(() => focusSourceLine(state.sourceLine), 0);
+}
+
 async function openSource() {
+  if (state.dirty || state.citationDirty) {
+    showToast("Save the current article edit before opening Source.", true);
+    return;
+  }
   setBusy(els.sourceButton, true);
   try {
-    const payload = await api("/api/document");
-    state.sourceHash = payload.hash;
-    state.sourceDirty = false;
-    updateBeforeUnload();
-    els.sourceEditor.value = payload.content;
+    const target = sourceTargetBlock();
+    const path = target ? target.source_path : state.article.path;
+    const line = target ? target.line_start : 1;
+    populateSourceFiles(path);
     els.sourceDialog.showModal();
-    window.setTimeout(() => els.sourceEditor.focus(), 0);
+    await loadSourceFile(path, line);
   } catch (error) {
+    if (els.sourceDialog.open) els.sourceDialog.close();
     showToast(error.message, true);
   } finally {
     setBusy(els.sourceButton, false);
@@ -1342,9 +1595,10 @@ async function openSource() {
 async function saveSource() {
   setBusy(els.sourceSave, true);
   try {
-    await api("/api/document", {
+    const payload = await api("/api/source", {
       method: "PUT",
       body: JSON.stringify({
+        path: state.sourcePath,
         content: els.sourceEditor.value,
         expected_hash: state.sourceHash,
       }),
@@ -1353,8 +1607,8 @@ async function saveSource() {
     state.sourceDirty = false;
     updateBeforeUnload();
     state.activeBlockId = null;
-    await loadArticle();
-    showToast("LaTeX source saved.");
+    applyArticle(payload);
+    showToast(state.sourcePath + " saved.");
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -1496,7 +1750,34 @@ els.identityForm.addEventListener("submit", (event) => {
   showToast("Comments will be signed as " + name + ".");
 });
 
+els.citationForm.addEventListener("input", (event) => {
+  if (event.target === els.citationKeys) {
+    syncBibDraftFromForm();
+    renderBibEditor();
+  }
+  state.citationDirty = true;
+  updateBeforeUnload();
+  if (state.externalHash) renderExternalChange();
+});
+els.citationForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveCitation();
+});
+
 els.sourceButton.addEventListener("click", openSource);
+els.sourceFileSelect.addEventListener("change", async () => {
+  if (state.sourceDirty) {
+    els.sourceFileSelect.value = state.sourcePath;
+    showToast("Save or cancel the current source edit before switching files.", true);
+    return;
+  }
+  try {
+    await loadSourceFile(els.sourceFileSelect.value, 1);
+  } catch (error) {
+    els.sourceFileSelect.value = state.sourcePath;
+    showToast(error.message, true);
+  }
+});
 els.sourceEditor.addEventListener("input", () => {
   state.sourceDirty = true;
   updateBeforeUnload();
@@ -1505,6 +1786,14 @@ els.sourceEditor.addEventListener("input", () => {
 els.sourceForm.addEventListener("submit", (event) => {
   event.preventDefault();
   saveSource();
+});
+els.sourceDialog.addEventListener("close", () => {
+  state.sourceDirty = false;
+  updateBeforeUnload();
+});
+els.citationDialog.addEventListener("close", () => {
+  state.citationDirty = false;
+  updateBeforeUnload();
 });
 els.saveButton.addEventListener("click", () => saveActiveBlock());
 
@@ -1515,6 +1804,9 @@ for (const button of $$("[data-close-dialog]")) {
       dialog.close();
       if (dialog === els.sourceDialog) {
         state.sourceDirty = false;
+        updateBeforeUnload();
+      } else if (dialog === els.citationDialog) {
+        state.citationDirty = false;
         updateBeforeUnload();
       }
     }
@@ -1535,7 +1827,9 @@ document.addEventListener("mousedown", (event) => {
 document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
-    if (els.sourceDialog.open) {
+    if (els.citationDialog.open) {
+      saveCitation();
+    } else if (els.sourceDialog.open) {
       saveSource();
     } else {
       saveActiveBlock();

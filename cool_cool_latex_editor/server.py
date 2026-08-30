@@ -13,13 +13,15 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .article import (
     add_article_comment,
     add_article_highlight,
     update_article_block,
+    update_article_citation,
 )
+from .bibliography import update_bibtex_entry
 from .comments import (
     add_comment,
     parse_comments,
@@ -119,14 +121,41 @@ class EditorApplication:
         content: str,
         expected_hash: Optional[str],
     ) -> None:
+        self._write_project_updates(
+            project=project,
+            updates=[(source, content)],
+            expected_hash=expected_hash,
+        )
+
+    def _write_project_updates(
+        self,
+        *,
+        project: LatexProject,
+        updates: Sequence[Tuple[ProjectSource, str]],
+        expected_hash: Optional[str],
+    ) -> None:
         self._assert_project_hash(expected_hash, project)
-        current = source.path.read_text(encoding="utf-8")
-        if content_hash(current) != source.hash:
-            raise DocumentConflict(
-                f"{source.relative_path} changed on disk. Reload before overwriting it."
-            )
-        if current != content:
-            self._write_source_file(source.path, content)
+        unique: Dict[Path, Tuple[ProjectSource, str]] = {}
+        for source, content in updates:
+            unique[source.path] = (source, content)
+        for source, _content in unique.values():
+            current = source.path.read_text(encoding="utf-8")
+            if content_hash(current) != source.hash:
+                raise DocumentConflict(
+                    f"{source.relative_path} changed on disk. Reload before overwriting it."
+                )
+
+        written: list[Tuple[ProjectSource, str]] = []
+        try:
+            for source, content in unique.values():
+                if source.content == content:
+                    continue
+                self._write_source_file(source.path, content)
+                written.append((source, source.content))
+        except Exception:
+            for source, original in reversed(written):
+                self._write_source_file(source.path, original)
+            raise
 
     def save_source(self, content: str, expected_hash: Optional[str]) -> str:
         with self.lock:
@@ -189,9 +218,39 @@ class EditorApplication:
             "comments": project.comments_payload(),
             "highlights": project.highlights_payload(),
             "sources": project.source_payloads(),
+            "bibliography": project.bibliography_payloads(),
             "warnings": project.warnings,
-            "git": self.git_info(project.relative_paths),
+            "git": self.git_info(
+                [*project.relative_paths, *project.bibliography_sources.keys()]
+            ),
         }
+
+    def project_source_payload(self, relative_path: str) -> Dict[str, Any]:
+        with self.lock:
+            project = self.read_project()
+            source = project.source(relative_path or self.relative_document)
+        return {
+            "path": source.relative_path,
+            "name": source.path.name,
+            "content": source.content,
+            "hash": project.hash,
+            "source_hash": source.hash,
+        }
+
+    def save_project_source(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        content = payload.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Source content must be a string.")
+        with self.lock:
+            project = self.read_project()
+            source = project.source(str(payload.get("path", "")))
+            self._save_project_source(
+                project=project,
+                source=source,
+                content=content,
+                expected_hash=payload.get("expected_hash"),
+            )
+        return self.article_payload()
 
     def status_payload(self) -> Dict[str, Any]:
         with self.lock:
@@ -221,6 +280,67 @@ class EditorApplication:
                 project=project,
                 source=target.source,
                 content=updated,
+                expected_hash=payload.get("expected_hash"),
+            )
+        return self.article_payload()
+
+    def update_article_citation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        keys = payload.get("keys")
+        bibliography_updates = payload.get("bibliography", [])
+        if not isinstance(keys, list):
+            raise ValueError("Citation keys must be a list.")
+        if not isinstance(bibliography_updates, list):
+            raise ValueError("Bibliography updates must be a list.")
+        normalized_keys = [str(key).strip() for key in keys if str(key).strip()]
+
+        with self.lock:
+            project = self.read_project()
+            target = project.block(str(payload.get("block_id", "")))
+            try:
+                token_index = int(payload.get("token_index", -1))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Citation token index is invalid.") from exc
+            updated_tex = update_article_citation(
+                target.source.content,
+                target.block.id,
+                token_index,
+                command=str(payload.get("command", "cite")),
+                options=str(payload.get("options", "")),
+                keys=normalized_keys,
+                allow_fragment=True,
+                bibliography=project.bibliography,
+                macros=project.macros,
+            )
+
+            updates_by_path: Dict[Path, Tuple[ProjectSource, str]] = {
+                target.source.path: (target.source, updated_tex)
+            }
+            seen_bibliography_keys = set()
+            for item in bibliography_updates:
+                if not isinstance(item, dict):
+                    raise ValueError("Each bibliography update must be an object.")
+                key = str(item.get("key", "")).strip()
+                if key not in normalized_keys:
+                    raise ValueError("Only bibliography entries used by this citation can be edited.")
+                if key in seen_bibliography_keys:
+                    raise ValueError(f"Bibliography entry {key!r} was submitted twice.")
+                seen_bibliography_keys.add(key)
+                source = project.bibliography_source(key)
+                current = updates_by_path.get(source.path, (source, source.content))[1]
+                updated = update_bibtex_entry(
+                    current,
+                    key,
+                    {
+                        "author": str(item.get("author", "")),
+                        "year": str(item.get("year", "")),
+                        "title": str(item.get("title", "")),
+                    },
+                )
+                updates_by_path[source.path] = (source, updated)
+
+            self._write_project_updates(
+                project=project,
+                updates=list(updates_by_path.values()),
                 expected_hash=payload.get("expected_hash"),
             )
         return self.article_payload()
@@ -493,7 +613,8 @@ class EditorRequestHandler(BaseHTTPRequestHandler):
         self._bytes(path.read_bytes(), content_type)
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             self._serve_static("index.html")
         elif path in {"/styles.css", "/app.js"}:
@@ -504,6 +625,13 @@ class EditorRequestHandler(BaseHTTPRequestHandler):
             self._json(self.server.app.document_payload())
         elif path == "/api/article":
             self._json(self.server.app.article_payload())
+        elif path == "/api/source":
+            query = parse_qs(parsed.query)
+            relative_path = query.get("path", [self.server.app.relative_document])[0]
+            try:
+                self._json(self.server.app.project_source_payload(relative_path))
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
         elif path == "/api/status":
             self._json(self.server.app.status_payload())
         elif path == "/api/git-diff":
@@ -527,13 +655,24 @@ class EditorRequestHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         path = urlparse(self.path).path
-        if path not in {"/api/document", "/api/article/block"}:
+        if path not in {
+            "/api/document",
+            "/api/article/block",
+            "/api/article/citation",
+            "/api/source",
+        }:
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
             return
         try:
             payload = self._read_json()
             if path == "/api/article/block":
                 self._json(self.server.app.update_article_block(payload))
+                return
+            if path == "/api/article/citation":
+                self._json(self.server.app.update_article_citation(payload))
+                return
+            if path == "/api/source":
+                self._json(self.server.app.save_project_source(payload))
                 return
             content = payload.get("content")
             if not isinstance(content, str):

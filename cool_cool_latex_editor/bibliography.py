@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, Iterator, Tuple
+from typing import Dict, Mapping, Optional
 
 
 ENTRY_RE = re.compile(
@@ -79,6 +79,7 @@ class BibliographyEntry:
     author: str = ""
     year: str = ""
     title: str = ""
+    source_path: str = ""
 
     @property
     def author_label(self) -> str:
@@ -113,62 +114,159 @@ class BibliographyEntry:
             details += f". {_plain_text(self.title)}"
         return f"{self.key} — {details}"
 
+    def public_dict(self) -> Dict[str, str]:
+        return {
+            "key": self.key,
+            "author": self.author,
+            "year": self.year,
+            "title": self.title,
+            "source_path": self.source_path,
+            "label": self.label,
+            "tooltip": self.tooltip,
+        }
 
-def _entry_bodies(source: str) -> Iterator[Tuple[str, str, str]]:
+
+@dataclass(frozen=True)
+class BibtexField:
+    name: str
+    value: str
+    value_start: int
+    value_end: int
+
+
+@dataclass(frozen=True)
+class BibtexRecord:
+    kind: str
+    key: str
+    start: int
+    end: int
+    closing: int
+    fields: Mapping[str, BibtexField]
+
+
+def _record_fields(source: str, start: int, end: int) -> Dict[str, BibtexField]:
+    result: Dict[str, BibtexField] = {}
+    cursor = start
+    while cursor < end:
+        match = FIELD_RE.search(source, cursor, end)
+        if not match:
+            break
+        value_start = match.end()
+        if value_start >= end:
+            break
+        if source[value_start] == "{":
+            value_end = _closing_brace(source, value_start + 1)
+            content_start = value_start + 1
+        elif source[value_start] == '"':
+            value_end = _quoted_end(source, value_start + 1)
+            content_start = value_start + 1
+        else:
+            value_end = source.find(",", value_start, end)
+            if value_end < 0:
+                value_end = end
+            content_start = value_start
+            while value_end > content_start and source[value_end - 1].isspace():
+                value_end -= 1
+        if value_end < 0 or value_end > end:
+            break
+        name = match.group("name").lower()
+        result[name] = BibtexField(
+            name=name,
+            value=source[content_start:value_end].strip(),
+            value_start=content_start,
+            value_end=value_end,
+        )
+        cursor = value_end + 1
+    return result
+
+
+def bibtex_records(source: str) -> Dict[str, BibtexRecord]:
+    records: Dict[str, BibtexRecord] = {}
     cursor = 0
     while True:
         match = ENTRY_RE.search(source, cursor)
         if not match:
-            return
+            break
         closing = _closing_brace(source, match.end())
         if closing < 0:
-            return
-        yield match.group("kind").lower(), match.group("key"), source[match.end() : closing]
+            break
+        kind = match.group("kind").lower()
+        key = match.group("key")
+        records[key] = BibtexRecord(
+            kind=kind,
+            key=key,
+            start=match.start(),
+            end=closing + 1,
+            closing=closing,
+            fields=_record_fields(source, match.end(), closing),
+        )
         cursor = closing + 1
+    return records
 
 
-def _fields(body: str) -> Dict[str, str]:
-    result: Dict[str, str] = {}
-    cursor = 0
-    while cursor < len(body):
-        match = FIELD_RE.search(body, cursor)
-        if not match:
-            break
-        value_start = match.end()
-        if value_start >= len(body):
-            break
-        if body[value_start] == "{":
-            value_end = _closing_brace(body, value_start + 1)
-            if value_end < 0:
-                break
-            value = body[value_start + 1 : value_end]
-            cursor = value_end + 1
-        elif body[value_start] == '"':
-            value_end = _quoted_end(body, value_start + 1)
-            if value_end < 0:
-                break
-            value = body[value_start + 1 : value_end]
-            cursor = value_end + 1
-        else:
-            value_end = body.find(",", value_start)
-            if value_end < 0:
-                value_end = len(body)
-            value = body[value_start:value_end]
-            cursor = value_end + 1
-        result[match.group("name").lower()] = value.strip()
-    return result
-
-
-def parse_bibtex(source: str) -> Dict[str, BibliographyEntry]:
+def parse_bibtex(source: str, *, source_path: str = "") -> Dict[str, BibliographyEntry]:
     entries: Dict[str, BibliographyEntry] = {}
-    for kind, key, body in _entry_bodies(source):
-        if kind in {"comment", "preamble", "string"}:
+    for key, record in bibtex_records(source).items():
+        if record.kind in {"comment", "preamble", "string"}:
             continue
-        fields = _fields(body)
+        fields = record.fields
         entries[key] = BibliographyEntry(
             key=key,
-            author=_plain_text(fields.get("author", "")),
-            year=_plain_text(fields.get("year", "")),
-            title=fields.get("title", ""),
+            author=fields["author"].value if "author" in fields else "",
+            year=fields["year"].value if "year" in fields else "",
+            title=fields["title"].value if "title" in fields else "",
+            source_path=source_path,
         )
     return entries
+
+
+def _balanced_braces(value: str) -> bool:
+    depth = 0
+    for index, character in enumerate(value):
+        if index and value[index - 1] == "\\":
+            continue
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def update_bibtex_entry(
+    source: str,
+    key: str,
+    updates: Mapping[str, str],
+) -> str:
+    record = bibtex_records(source).get(key)
+    if record is None:
+        raise ValueError(f"Bibliography entry {key!r} was not found.")
+    allowed = {"author", "year", "title"}
+    replacements = []
+    missing: Dict[str, str] = {}
+    for raw_name, raw_value in updates.items():
+        name = raw_name.lower().strip()
+        if name not in allowed:
+            raise ValueError(f"Bibliography field {raw_name!r} cannot be edited here.")
+        value = str(raw_value).strip()
+        if "\x00" in value or not _balanced_braces(value):
+            raise ValueError(f"Bibliography field {name!r} contains invalid braces.")
+        field = record.fields.get(name)
+        if field is None:
+            missing[name] = value
+        else:
+            replacements.append((field.value_start, field.value_end, value))
+
+    if missing:
+        before_closing = source[: record.closing].rstrip()
+        separator = "" if before_closing.endswith(",") else ","
+        insertion = separator + "\n" + "\n".join(
+            f"  {name:<9}= {{{value}}}," for name, value in missing.items()
+        ) + "\n"
+        replacements.append((record.closing, record.closing, insertion))
+
+    updated = source
+    for start, end, value in sorted(replacements, reverse=True):
+        updated = updated[:start] + value + updated[end:]
+    return updated

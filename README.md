@@ -9,11 +9,11 @@ A lightweight, local, Git-native writing and review interface for LaTeX manuscri
 - Renders LaTeX as a centered article instead of an IDE or PDF viewer.
 - Recursively follows static `\\input{...}` and `\\include{...}` references, including references from already included files.
 - Keeps the document title and an explicit Abstract heading in the article view.
-- Resolves BibTeX citations into protected author-year labels with full-reference hover text while preserving the original `\\cite{...}` source.
+- Resolves BibTeX citations into author-year labels with full-reference hover text. In paragraph edit mode, click a citation to edit its command, options, keys, and the referenced BibTeX author, year, and title fields.
 - Lets you click a paragraph for a focused edit while protecting formulas, emphasis, links, and other LaTeX structures.
 - Adds passage comments, document-level comments, and editor-only highlights from a text selection.
 - Stores annotations as TeX comments, so they do not appear in normal LaTeX or PDF output.
-- Provides Reading and Bubbles display modes, a document outline, and a full Source mode.
+- Provides Reading and Bubbles display modes, a document outline, and a contextual Source mode that opens the active passage's real file at its exact line.
 - Detects external file updates without silently discarding unsaved browser edits.
 - Stores the chosen reviewer name with each annotation, making review history portable through Git.
 
@@ -58,7 +58,7 @@ cool-cool-latex-editor draft/proposal.tex --port 0 --open
 
 The editor discovers the containing Git repository automatically. Use `--root /path/to/repository` only when automatic discovery is not appropriate.
 
-For a multi-file manuscript, pass the main entry file. The header reports how many source files were loaded, and hovering it lists their paths and any unresolved include warnings. Article edits, comments, and highlights are written back to the included file that owns the selected passage. **Source** mode intentionally edits only the main entry file. BibTeX files named by `\\bibliography{...}` or `\\addbibresource{...}` are watched as display dependencies; changing one refreshes citation labels without counting it as a LaTeX source file.
+For a multi-file manuscript, pass the main entry file. The header reports how many source files were loaded, and hovering it lists their paths and any unresolved include warnings. Article edits, comments, and highlights are written back to the included file that owns the selected passage. **Source** mode follows the active passage to its owning file and line; its file picker can switch among all loaded TeX sources. BibTeX files named by `\\bibliography{...}` or `\\addbibresource{...}` are watched as display dependencies. Citation editing writes supported fields back to the entry's real `.bib` file, while other fields and entries remain intact.
 
 Check the installed version with:
 
@@ -131,7 +131,7 @@ Codex normally detects skill file changes automatically. Restart Codex CLI if an
 
 1. Pull the manuscript repository and launch the editor locally.
 2. Edit prose or add passage comments, an overall comment, and highlights.
-3. Use **Source** mode for structural or LaTeX-specific changes.
+3. Use **Source** mode for structural or LaTeX-specific changes; it starts at the active passage's real source location.
 4. Review the normal Git diff, then commit and push the `.tex` changes.
 
 Comment status is either `open` or `addressed`; “addressed” does not imply that an AI made the edit. Editor metadata consists of valid TeX comments and stays out of normal LaTeX/PDF output. Source mode can also export a clean `.tex` file with editor metadata removed.
@@ -150,4 +150,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-Current version: `0.2.1`
+Current version: `0.3.0`

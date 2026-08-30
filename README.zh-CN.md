@@ -9,11 +9,11 @@
 - 把 LaTeX 渲染成居中的文章视图，而不是 IDE 或 PDF 阅读器。
 - 递归读取静态 `\\input{...}` 和 `\\include{...}`，包括被引用文件继续引用的更深层文件。
 - 在文章视图中保留论文标题，并明确显示 “Abstract” 标题。
-- 把 BibTeX citation 显示为受保护的作者–年份标签，悬停可查看完整条目，同时原样保留 `\\cite{...}` 源码。
+- 把 BibTeX citation 显示为作者–年份标签，悬停可查看完整条目。进入段落编辑后，点击引用即可修改 cite 命令、options、keys，以及对应 BibTeX 条目的 author、year 和 title。
 - 点击段落即可小范围修改，同时保护公式、强调、链接等 LaTeX 结构。
 - 选中文字可以添加段落评论、全文评论和仅供编辑使用的高亮。
 - 评论与高亮以 TeX comment 保存，因此不会进入正常的 LaTeX 或 PDF 输出。
-- 支持 Reading、Bubbles 两种显示模式，以及文档 outline 和完整 Source 模式。
+- 支持 Reading、Bubbles 两种显示模式，以及文档 outline；Source 会打开当前段落真正所属的文件，并准确跳到对应行。
 - 自动发现磁盘上的外部更新，不会擅自覆盖浏览器中尚未保存的编辑。
 - 每条标注都保留用户选择的名字，适合通过 Git 传递多人评阅历史。
 
@@ -58,7 +58,7 @@ cool-cool-latex-editor draft/proposal.tex --port 0 --open
 
 编辑器会自动寻找 `.tex` 文件所在的 Git 仓库。只有自动发现不合适时才需要使用 `--root /path/to/repository`。
 
-多文件文章应传入主入口文件。页面顶部会显示已经载入的源文件数量；悬停可以查看文件路径和未解析引用警告。文章视图中的编辑、评论和高亮会写回所选段落真正所在的引用文件。**Source** 模式则有意只编辑主入口文件。`\\bibliography{...}` 或 `\\addbibresource{...}` 指向的 BibTeX 文件会作为显示依赖被监测；修改它会刷新 citation 标签，但不会计入 LaTeX 源文件数量。
+多文件文章应传入主入口文件。页面顶部会显示已经载入的源文件数量；悬停可以查看文件路径和未解析引用警告。文章视图中的编辑、评论和高亮会写回所选段落真正所在的引用文件。**Source** 会跟随当前段落打开它所属的文件和行号，也可从下拉菜单切换所有已载入的 TeX 文件。`\\bibliography{...}` 或 `\\addbibresource{...}` 指向的 BibTeX 文件会作为显示依赖被监测；引用编辑会写回条目所在的真实 `.bib` 文件，同时保留其他字段与条目。
 
 查看当前安装版本：
 
@@ -131,7 +131,7 @@ Codex 通常会自动检测 skill 文件变化；如果没有生效，请重启 
 
 1. `git pull` 后在本地启动编辑器。
 2. 编辑正文，添加段落评论、overall comment 或高亮。
-3. 需要 LaTeX 结构修改时切换到 **Source**。
+3. 需要 LaTeX 结构修改时切换到 **Source**；它会从当前段落对应的真实源文件位置开始。
 4. 检查正常的 Git diff，然后 commit 和 push `.tex` 的修改。
 
 评论状态只有 `open` 和 `addressed`；“已处理”不暗示修改一定由 AI 完成。编辑器元数据都是合法 TeX comments，正常 LaTeX/PDF 输出不会显示。Source 模式还可以导出移除这些元数据的 clean `.tex`。
@@ -150,4 +150,4 @@ python3 -m unittest discover -s tests -v
 node --check cool_cool_latex_editor/static/app.js
 ```
 
-当前版本：`0.2.1`
+当前版本：`0.3.0`

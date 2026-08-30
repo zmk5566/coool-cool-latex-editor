@@ -238,6 +238,103 @@ class ServerTests(unittest.TestCase):
             )
         )
 
+    def test_source_api_opens_and_saves_the_selected_included_file(self):
+        included, _nested = self.write_multifile_document()
+        root_before = self.document.read_text(encoding="utf-8")
+        article = self.request("/api/article")
+
+        source = self.request("/api/source?path=sections/one.tex")
+
+        self.assertEqual(source["path"], "sections/one.tex")
+        self.assertEqual(source["hash"], article["hash"])
+        self.assertIn("Included paragraph.", source["content"])
+        saved = self.request(
+            "/api/source",
+            method="PUT",
+            payload={
+                "path": "sections/one.tex",
+                "content": source["content"].replace(
+                    "Included paragraph.", "Included paragraph from Source mode."
+                ),
+                "expected_hash": article["hash"],
+            },
+        )
+
+        self.assertIn("Included paragraph from Source mode.", included.read_text(encoding="utf-8"))
+        self.assertEqual(self.document.read_text(encoding="utf-8"), root_before)
+        self.assertTrue(
+            any(
+                block["source_path"] == "sections/one.tex"
+                and "Included paragraph from Source mode."
+                in "".join(run["text"] for run in block["runs"])
+                for block in saved["blocks"]
+            )
+        )
+
+    def test_citation_api_updates_tex_fields_and_referenced_bib_entry(self):
+        sections = self.root / "sections"
+        sections.mkdir()
+        related = sections / "related.tex"
+        bibliography = self.root / "references.bib"
+        self.document.write_text(
+            "\\documentclass{article}\n"
+            "\\begin{document}\n"
+            "\\input{sections/related}\n"
+            "\\bibliography{references}\n"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+        related.write_text(
+            "Prior work~\\cite{sample2024}.\n",
+            encoding="utf-8",
+        )
+        bibliography.write_text(
+            "@article{sample2024,\n"
+            "  author = {Old, Alice},\n"
+            "  title = {Original title},\n"
+            "  year = {2024},\n"
+            "  doi = {10.0000/example}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        article = self.request("/api/article")
+        paragraph = article["blocks"][0]
+        citation = next(run for run in paragraph["runs"] if run.get("kind") == "citation")
+
+        updated = self.request(
+            "/api/article/citation",
+            method="PUT",
+            payload={
+                "block_id": paragraph["id"],
+                "token_index": citation["index"],
+                "command": "citet",
+                "options": "[p. 8]",
+                "keys": ["sample2024"],
+                "bibliography": [
+                    {
+                        "key": "sample2024",
+                        "author": "New, Alice and Other, Bob",
+                        "title": "Revised title",
+                        "year": "2026",
+                    }
+                ],
+                "expected_hash": article["hash"],
+            },
+        )
+
+        self.assertIn("\\citet[p. 8]{sample2024}", related.read_text(encoding="utf-8"))
+        bib_source = bibliography.read_text(encoding="utf-8")
+        self.assertIn("author = {New, Alice and Other, Bob}", bib_source)
+        self.assertIn("title = {Revised title}", bib_source)
+        self.assertIn("year = {2026}", bib_source)
+        self.assertIn("doi = {10.0000/example}", bib_source)
+        self.assertEqual(updated["bibliography"][0]["source_path"], "references.bib")
+        updated_citation = next(
+            run for run in updated["blocks"][0]["runs"] if run.get("kind") == "citation"
+        )
+        self.assertEqual(updated_citation["text"], "New & Other (2026)")
+        self.assertIn("Revised title", updated_citation["tooltip"])
+
     def test_recursive_comments_and_highlights_stay_with_the_origin_file(self):
         included, nested = self.write_multifile_document()
         article = self.request("/api/article")

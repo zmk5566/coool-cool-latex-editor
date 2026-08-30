@@ -11,6 +11,7 @@ from cool_cool_latex_editor.article import (
     add_article_highlight,
     parse_article,
     update_article_block,
+    update_article_citation,
 )
 from cool_cool_latex_editor.comments import parse_comments, parse_highlights
 from cool_cool_latex_editor.bibliography import BibliographyEntry
@@ -142,6 +143,32 @@ class ArticleTests(unittest.TestCase):
         )
         self.assertIn(BS + "cite{greenberg2001phidgets}", updated)
         self.assertNotIn(BS + "textbackslash{}cite", updated)
+
+    def test_updates_citation_fields_without_editing_surrounding_text(self):
+        source = "\n".join(
+            [
+                BS + "documentclass{article}",
+                BS + "begin{document}",
+                "Prior work~" + BS + "cite[p. 4]{old-key} remains relevant.",
+                BS + "end{document}",
+            ]
+        )
+        paragraph = parse_article(source)[0]
+        citation = paragraph.tokens[0].public_dict()["citation"]
+        self.assertEqual(citation, {"command": "cite", "options": "[p. 4]", "keys": ["old-key"]})
+
+        updated = update_article_citation(
+            source,
+            paragraph.id,
+            0,
+            command="citet",
+            options="[pp. 4--6]",
+            keys=["new-key", "other:key"],
+        )
+
+        self.assertIn(BS + "citet[pp. 4--6]{new-key,other:key}", updated)
+        self.assertIn("Prior work~", updated)
+        self.assertIn(" remains relevant.", updated)
 
     def test_parses_included_fragment_and_skips_non_prose_figure_source(self):
         fragment = "\n".join(

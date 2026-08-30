@@ -1,6 +1,6 @@
 ---
 name: cool-cool-latex-editor
-description: Launch, explain, version-check, or update Cool Cool LaTeX Editor for local Git-managed single-file or recursively included .tex review. Use when a user asks Codex to open a LaTeX manuscript in the editor, choose its local port, work with its comments or highlights, check its installed version, or update it from GitHub. Do not use for general LaTeX compilation or PDF editing.
+description: Launch, explain, version-check, or update Cool Cool LaTeX Editor for local Git-managed single-file or recursively included .tex review. Use when a user asks Codex to open a LaTeX manuscript in the editor, choose its local port, work with comments, highlights, citations, BibTeX, or contextual source editing, check its installed version, or update it from GitHub. Do not use for general LaTeX compilation or PDF editing.
 ---
 
 # Cool Cool LaTeX Editor
@@ -39,9 +39,9 @@ Prefer `pipx`; use a project virtual environment or ordinary `pip` only when tha
 
 - The browser view is an intermediate representation; the `.tex` file remains authoritative.
 - In a multi-file project, each article block retains its source path. Paragraph edits, inline comments, and highlights write back to that file; overall comments belong to the main entry file.
-- Paragraph edits preserve protected LaTeX tokens. Structural edits belong in **Source** mode.
-- The article view keeps the document title and an explicit **Abstract** heading. BibTeX citations are protected tokens: they display as author-year labels with reference details on hover, while saves preserve the original `\\cite{...}` command.
-- **Source** mode edits only the main entry file. Use the article view for focused changes in included files.
+- Paragraph edits preserve protected LaTeX tokens. In paragraph edit mode, a citation token is a separate button: use it to edit the cite command, options, comma-separated keys, and the author, year, or title of referenced BibTeX entries. Those changes write to the owning `.tex` and `.bib` files together.
+- The article view keeps the document title and an explicit **Abstract** heading. Citations continue to render as author-year labels with reference details on hover after their source fields are edited.
+- **Source** mode follows the active or most recently outlined passage to its owning TeX file and exact line. Its file picker can switch among all recursively loaded sources. Use it for structural or LaTeX-specific changes.
 - Passage comments, overall comments, anchors, and highlights are stored as TeX comments and do not render into normal PDF output.
 - **Reading** is quiet; **Bubbles** shows open discussions beside their text on wide screens.
 - External disk changes in any loaded source produce a reload prompt. Never discard unsaved browser edits on the user's behalf.

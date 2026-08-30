@@ -130,6 +130,22 @@ class LatexProject:
             for source in self.sources.values()
         ]
 
+    def bibliography_payloads(self) -> List[Dict[str, str]]:
+        return [self.bibliography[key].public_dict() for key in sorted(self.bibliography)]
+
+    def source(self, relative_path: str) -> ProjectSource:
+        try:
+            return self.sources[relative_path]
+        except KeyError as exc:
+            raise ValueError(f"LaTeX source {relative_path!r} is not loaded.") from exc
+
+    def bibliography_source(self, key: str) -> ProjectSource:
+        try:
+            entry = self.bibliography[key]
+            return self.bibliography_sources[entry.source_path]
+        except KeyError as exc:
+            raise ValueError(f"Bibliography entry {key!r} was not found.") from exc
+
     def block(self, public_id: str) -> ProjectBlock:
         try:
             return self._block_map[public_id]
@@ -244,7 +260,7 @@ class LatexProject:
             modified_ns=modified_ns,
         )
         self.bibliography_sources[relative_path] = source
-        self.bibliography.update(parse_bibtex(content))
+        self.bibliography.update(parse_bibtex(content, source_path=relative_path))
 
     def _load_bibliographies(self, source: ProjectSource) -> None:
         targets: List[str] = []
