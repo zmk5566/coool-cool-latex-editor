@@ -22,13 +22,7 @@
 
 ## 安装
 
-推荐使用 `pipx`：
-
-```bash
-pipx install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
-```
-
-也可以安装到当前 Python 环境：
+使用 `pip` 安装：
 
 ```bash
 python3 -m pip install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
@@ -69,13 +63,7 @@ cool-cool-latex-editor --version
 
 ## 更新
 
-通过 `pipx` 安装时：
-
-```bash
-pipx upgrade cool-cool-latex-editor
-```
-
-通过普通 `pip` 安装时：
+使用 `pip` 更新：
 
 ```bash
 python3 -m pip install --upgrade "git+https://github.com/zmk5566/coool-cool-latex-editor.git"

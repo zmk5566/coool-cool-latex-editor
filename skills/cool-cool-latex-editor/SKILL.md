@@ -30,10 +30,10 @@ Use the user's port when supplied; otherwise use the default `4179`, or port `0`
 If the command is unavailable, explain the installation and request authorization before changing the Python environment:
 
 ```bash
-pipx install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
+python3 -m pip install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
 ```
 
-Prefer `pipx`; use a project virtual environment or ordinary `pip` only when that better matches the user's environment.
+Use `pip` by default, preferably inside the user's active project or virtual environment when one exists.
 
 ## Explain the editing model
 
@@ -58,10 +58,9 @@ Read the installed version with:
 cool-cool-latex-editor --version
 ```
 
-Only update when the user asks. Determine whether the installation is managed by `pipx`, an ordinary Python environment, or an editable source checkout. Use the matching operation:
+Only update when the user asks. Determine whether the installation uses an ordinary Python environment or an editable source checkout. Use the matching operation:
 
 ```bash
-pipx upgrade cool-cool-latex-editor
 python3 -m pip install --upgrade "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
 git -C <checkout> pull --ff-only
 ```

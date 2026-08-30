@@ -22,13 +22,7 @@ The package has no runtime dependencies and binds to `127.0.0.1` by default.
 
 ## Install
 
-`pipx` is recommended:
-
-```bash
-pipx install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
-```
-
-You can also install it into the current Python environment:
+Install it with `pip`:
 
 ```bash
 python3 -m pip install "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
@@ -69,13 +63,7 @@ cool-cool-latex-editor --version
 
 ## Update
 
-For a `pipx` installation:
-
-```bash
-pipx upgrade cool-cool-latex-editor
-```
-
-For a regular `pip` installation:
+Update the installed package with `pip`:
 
 ```bash
 python3 -m pip install --upgrade "git+https://github.com/zmk5566/coool-cool-latex-editor.git"
