@@ -128,6 +128,49 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(article["warnings"], [])
         self.assertEqual(article["blocks"][4]["source_path"], "figures/deep.tex")
 
+    def test_article_api_resolves_framing_targets_and_reports_mapping_health(self):
+        included, _ = self.write_multifile_document()
+        included.write_text(
+            '%<text-anchor id="ta-framing-one"/>\n'
+            "\\section{Included section}\n"
+            "\\label{sec:included}\n\n"
+            "Included paragraph.\n\n"
+            "\\input{figures/deep}\n",
+            encoding="utf-8",
+        )
+        records = (
+            '%<editor-framing\n% id="linked"\n% section="intro"\n% role="gap"\n'
+            '% status="confirmed"\n% order="10"\n%>\n% 已对应\n'
+            '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="Included section"/>\n'
+            '%</editor-framing>\n'
+            '%<editor-framing\n% id="stale"\n% section="intro"\n% role="method"\n'
+            '% status="proposed"\n% order="20"\n% parent="linked"\n%>\n% 已变化\n'
+            '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="No longer present"/>\n'
+            '%</editor-framing>\n'
+            '%<editor-framing\n% id="missing"\n% section="intro"\n% role="result"\n'
+            '% status="proposed"\n% order="30"\n% parent="linked"\n%>\n% 找不到锚点\n'
+            '%<editor-framing-target source="sections/one.tex" target="ta-absent" quote="Included section"/>\n'
+            '%</editor-framing>\n'
+            '%<editor-framing\n% id="placeholder"\n% section="intro"\n% role="result"\n'
+            '% status="placeholder"\n% order="40"\n% parent="linked"\n%>\n% 尚无正文\n'
+            '%</editor-framing>\n'
+        )
+        self.document.write_text(
+            records + self.document.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        article = self.request("/api/article")
+
+        framing = {item["id"]: item for item in article["framing"]}
+        self.assertEqual(list(framing), ["linked", "stale", "missing", "placeholder"])
+        self.assertEqual(framing["linked"]["targets"][0]["health"], "linked")
+        self.assertEqual(framing["linked"]["targets"][0]["source_path"], "sections/one.tex")
+        self.assertIn("sections/one.tex::ta-framing-one", framing["linked"]["targets"][0]["block_id"])
+        self.assertEqual(framing["stale"]["targets"][0]["health"], "stale")
+        self.assertEqual(framing["missing"]["targets"][0]["health"], "missing")
+        self.assertEqual(framing["placeholder"]["health"], "unlinked")
+        self.assertEqual(framing["stale"]["parent"], "linked")
+
     def test_project_renders_title_abstract_and_bibliography_citations(self):
         sections = self.root / "sections"
         sections.mkdir()
@@ -476,6 +519,18 @@ class ServerTests(unittest.TestCase):
         self.assertIn(b"Overall comment", html)
         self.assertIn(b"LaTeX changed on disk", html)
         self.assertNotIn(b"PDF preview", html)
+
+    def test_framing_shell_is_empty_and_rendered_from_article_data(self):
+        html = self.request("/")
+        script = self.request("/app.js")
+
+        self.assertIn(b'id="framing-rail"', html)
+        self.assertIn(b'id="framing-sections"', html)
+        self.assertNotIn("创意实践通过反复试验".encode(), html)
+        self.assertNotIn("尚待实证结果支撑".encode(), html)
+        self.assertNotIn(b'get("framing-demo")', script)
+        self.assertIn(b"renderFraming", script)
+        self.assertIn(b"state.article.framing", script)
 
     def test_article_block_api_round_trips_plain_text(self):
         article = self.request("/api/article")

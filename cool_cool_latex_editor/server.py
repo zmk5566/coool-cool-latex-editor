@@ -220,6 +220,7 @@ class EditorApplication:
             "sources": project.source_payloads(),
             "bibliography": project.bibliography_payloads(),
             "references": project.references_payloads(),
+            "framing": project.framing_payloads(),
             "warnings": project.warnings,
             "git": self.git_info(
                 [*project.relative_paths, *project.bibliography_sources.keys()]

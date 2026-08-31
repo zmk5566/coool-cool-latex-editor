@@ -38,6 +38,8 @@ const state = {
   dismissedExternalHash: "",
   statusChecking: false,
   pendingWrites: 0,
+  framingActiveId: null,
+  framingTargetIndexById: {},
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -49,6 +51,9 @@ const els = {
   articleStage: $("#article-stage"),
   outlineList: $("#outline-list"),
   bubbleRail: $("#bubble-rail"),
+  framingRail: $("#framing-rail"),
+  framingSections: $("#framing-sections"),
+  framingNote: $("#framing-note"),
   fileName: $("#file-name"),
   authorButton: $("#author-button"),
   authorName: $("#author-name"),
@@ -782,6 +787,230 @@ function renderReferences() {
   return section;
 }
 
+function framingRangeForOffsets(content, start, end) {
+  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  let offset = 0;
+  let startNode = null;
+  let endNode = null;
+  let startOffset = 0;
+  let endOffset = 0;
+  while (node) {
+    const nextOffset = offset + node.nodeValue.length;
+    if (!startNode && start >= offset && start <= nextOffset) {
+      startNode = node;
+      startOffset = Math.min(node.nodeValue.length, start - offset);
+    }
+    if (end >= offset && end <= nextOffset) {
+      endNode = node;
+      endOffset = Math.min(node.nodeValue.length, end - offset);
+      break;
+    }
+    offset = nextOffset;
+    node = walker.nextNode();
+  }
+  if (!startNode || !endNode) return null;
+  const range = document.createRange();
+  range.setStart(startNode, startOffset);
+  range.setEnd(endNode, endOffset);
+  return range;
+}
+
+function framingRangeForQuote(content, quote) {
+  if (!quote) return null;
+  const text = content.textContent || "";
+  let start = text.indexOf(quote);
+  let end = start >= 0 ? start + quote.length : -1;
+  if (start < 0) {
+    let normalized = "";
+    const offsets = [];
+    let whitespace = false;
+    for (let index = 0; index < text.length; index += 1) {
+      if (/\s/.test(text[index])) {
+        if (!whitespace) {
+          normalized += " ";
+          offsets.push(index);
+          whitespace = true;
+        }
+      } else {
+        normalized += text[index];
+        offsets.push(index);
+        whitespace = false;
+      }
+    }
+    const normalizedQuote = quote.replace(/\s+/g, " ").trim();
+    const normalizedStart = normalized.indexOf(normalizedQuote);
+    if (normalizedStart >= 0) {
+      start = offsets[normalizedStart];
+      end = offsets[normalizedStart + normalizedQuote.length - 1] + 1;
+    }
+  }
+  return start >= 0 && end > start ? framingRangeForOffsets(content, start, end) : null;
+}
+
+function framingRoleLabel(role) {
+  return {
+    background: "背景",
+    gap: "缺口",
+    proposal: "提案",
+    mechanism: "机制",
+    method: "方法",
+    result: "结果",
+    contribution: "贡献",
+  }[role] || role;
+}
+
+function activateFraming(itemId, { scroll = true, advance = false } = {}) {
+  const items = state.article && Array.isArray(state.article.framing)
+    ? state.article.framing
+    : [];
+  const item = items.find((candidate) => candidate.id === itemId);
+  if (!item || !els.framingRail) return;
+  const targets = Array.isArray(item.targets) ? item.targets : [];
+  let targetIndex = state.framingTargetIndexById[itemId] || 0;
+  if (advance && state.framingActiveId === itemId && targets.length > 1) {
+    targetIndex = (targetIndex + 1) % targets.length;
+  }
+  state.framingTargetIndexById[itemId] = targetIndex;
+  state.framingActiveId = itemId;
+  for (const button of $$('[data-framing-id]', els.framingRail)) {
+    const active = button.dataset.framingId === itemId;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-current", active ? "true" : "false");
+  }
+  if (CSS.highlights) CSS.highlights.delete("framing-target");
+  const target = targets[targetIndex];
+  const row = target && target.block_id
+    ? $('.article-block[data-block-id="' + CSS.escape(target.block_id) + '"]')
+    : null;
+  const content = row ? $(".editable-content", row) : null;
+  if (content && target.health === "linked" && CSS.highlights) {
+    const range = framingRangeForQuote(content, target.quote);
+    if (range) CSS.highlights.set("framing-target", new Highlight(range));
+  }
+  if (row && scroll) {
+    row.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "center",
+    });
+  }
+  if (els.framingNote) {
+    if (!target) {
+      els.framingNote.textContent = "占位符：当前没有对应正文";
+    } else if (target.health === "stale") {
+      els.framingNote.textContent = "对应正文已变化，需要重新建立映射";
+    } else if (target.health === "missing") {
+      els.framingNote.textContent = "找不到对应的正文锚点";
+    } else {
+      els.framingNote.textContent =
+        targets.length > 1
+          ? `第 ${targetIndex + 1} / ${targets.length} 处对应；再次点击查看下一处`
+          : "已定位到对应正文";
+    }
+  }
+}
+
+function framingNode(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className =
+    "framing-node is-" + item.status +
+    (item.health === "stale" || item.health === "missing" ? " has-mapping-warning" : "");
+  button.dataset.framingId = item.id;
+  button.setAttribute("aria-label", framingRoleLabel(item.role) + "｜" + item.text);
+  const marker = document.createElement("span");
+  marker.className = "framing-node-marker";
+  marker.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("span");
+  copy.className = "framing-node-copy";
+  const role = document.createElement("strong");
+  role.textContent = framingRoleLabel(item.role);
+  if (item.status === "placeholder") {
+    const status = document.createElement("em");
+    status.textContent = "占位";
+    role.append(status);
+  }
+  const text = document.createElement("span");
+  text.textContent = item.text;
+  copy.append(role, text);
+  button.append(marker, copy);
+  if (Array.isArray(item.targets) && item.targets.length) {
+    const count = document.createElement("small");
+    count.className = "framing-match";
+    count.textContent = item.targets.length + " 处对应";
+    button.append(count);
+  }
+  button.addEventListener("click", () =>
+    activateFraming(item.id, { advance: true })
+  );
+  return button;
+}
+
+function framingRelation(text, support = false) {
+  const relation = document.createElement("span");
+  relation.className = "framing-relation" + (support ? " framing-relation-support" : "");
+  relation.textContent = text;
+  return relation;
+}
+
+function renderFramingSection(items) {
+  const section = document.createElement("section");
+  section.className = "framing-section";
+  const heading = document.createElement("h2");
+  heading.textContent = items[0].section_label || items[0].section;
+  const argument = document.createElement("div");
+  argument.className = "framing-argument";
+  const itemIds = new Set(items.map((item) => item.id));
+  const roots = items.filter((item) => !item.parent || !itemIds.has(item.parent));
+  const children = (parentId) => items.filter((item) => item.parent === parentId);
+  for (const root of roots) {
+    if (root.relation) argument.append(framingRelation(root.relation));
+    argument.append(framingNode(root));
+    const supporting = children(root.id);
+    if (supporting.length) {
+      const label = supporting.find((item) => item.relation);
+      if (label) argument.append(framingRelation(label.relation, true));
+      const supports = document.createElement("div");
+      supports.className = "framing-supports";
+      for (const child of supporting) supports.append(framingNode(child));
+      argument.append(supports);
+    }
+  }
+  section.append(heading, argument);
+  return section;
+}
+
+function renderFraming() {
+  const items = state.article && Array.isArray(state.article.framing)
+    ? state.article.framing
+    : [];
+  const visible = items.length > 0;
+  els.app.classList.toggle("framing-layout-enabled", visible);
+  els.framingRail.hidden = !visible;
+  if (!visible) {
+    els.framingSections.replaceChildren();
+    if (CSS.highlights) CSS.highlights.delete("framing-target");
+    return;
+  }
+  const sections = [];
+  for (const item of items) {
+    let section = sections.find((entry) => entry.key === item.section);
+    if (!section) {
+      section = { key: item.section, items: [] };
+      sections.push(section);
+    }
+    section.items.push(item);
+  }
+  els.framingSections.replaceChildren(
+    ...sections.map((section) => renderFramingSection(section.items))
+  );
+  const active = items.find((item) => item.id === state.framingActiveId) ||
+    items.find((item) => item.health === "linked") || items[0];
+  window.requestAnimationFrame(() =>
+    activateFraming(active.id, { scroll: false })
+  );
+}
+
 function renderArticle() {
   if (!state.article) return;
   const fragment = document.createDocumentFragment();
@@ -792,6 +1021,7 @@ function renderArticle() {
   if (references) fragment.append(references);
   els.article.replaceChildren(fragment);
   renderOutline();
+  renderFraming();
   window.requestAnimationFrame(() => {
     renderHighlights();
     renderBubbles();

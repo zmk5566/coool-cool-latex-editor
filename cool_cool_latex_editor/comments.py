@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
+from .framing import strip_framing_metadata
+
 
 COMMENT_RE = re.compile(
     r"^%<editor-comment\b(?P<attrs>.*?)^%>\s*\n"
@@ -343,7 +345,8 @@ def remove_highlight(source: str, highlight_id: str) -> str:
 
 
 def strip_editor_metadata(source: str) -> str:
-    clean = COMMENT_RE.sub("", source)
+    clean = strip_framing_metadata(source)
+    clean = COMMENT_RE.sub("", clean)
     clean = HIGHLIGHT_RE.sub("", clean)
     clean = ANCHOR_RE.sub("", clean)
     clean = re.sub(r"\n{3,}", "\n\n", clean)

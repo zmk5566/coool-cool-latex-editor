@@ -16,6 +16,7 @@ from .article import (
 )
 from .bibliography import BibliographyEntry, parse_bibtex
 from .comments import parse_comments, parse_highlights
+from .framing import FramingItem, parse_framings
 
 
 INCLUDE_RE = re.compile(
@@ -72,6 +73,7 @@ class LatexProject:
     _block_map: Dict[str, ProjectBlock] = field(default_factory=dict)
     _target_map: Dict[Tuple[str, str], str] = field(default_factory=dict)
     _block_occurrences: Dict[Tuple[str, str], int] = field(default_factory=dict)
+    framings: List[FramingItem] = field(default_factory=list)
 
     @classmethod
     def load(cls, *, root: Path, document: Path) -> "LatexProject":
@@ -82,6 +84,8 @@ class LatexProject:
         project.macros = extract_simple_macros(root_source.content)
         project._load_bibliographies(root_source)
         project._walk(project.document, is_root=True, stack=[])
+        project.framings, framing_warnings = parse_framings(root_source.content)
+        project.warnings.extend(framing_warnings)
         return project
 
     @property
@@ -164,6 +168,63 @@ class LatexProject:
                 data = entry.public_dict()
             data["index"] = index
             result.append(data)
+        return result
+
+    @staticmethod
+    def _normalized_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
+    def framing_payloads(self) -> List[Dict[str, object]]:
+        result: List[Dict[str, object]] = []
+        for item in self.framings:
+            targets: List[Dict[str, object]] = []
+            for target in item.targets:
+                public_id = self._target_map.get((target.source_path, target.anchor))
+                health = "missing"
+                if public_id is not None:
+                    project_block = self._block_map[public_id]
+                    rendered = self._normalized_text(
+                        "".join(
+                            str(run.get("text", ""))
+                            for run in project_block.block.runs
+                        )
+                    )
+                    quote = self._normalized_text(target.quote or "")
+                    health = "linked" if not quote or quote in rendered else "stale"
+                targets.append(
+                    {
+                        "block_id": public_id,
+                        "source_path": target.source_path,
+                        "quote": target.quote,
+                        "prefix": target.prefix,
+                        "suffix": target.suffix,
+                        "health": health,
+                    }
+                )
+            health = "unlinked"
+            if targets:
+                target_health = [str(target["health"]) for target in targets]
+                if "linked" in target_health:
+                    health = "linked"
+                elif "stale" in target_health:
+                    health = "stale"
+                else:
+                    health = "missing"
+            result.append(
+                {
+                    "id": item.id,
+                    "section": item.section,
+                    "section_label": item.section_label,
+                    "role": item.role,
+                    "status": item.status,
+                    "order": item.order,
+                    "parent": item.parent,
+                    "relation": item.relation,
+                    "text": item.text,
+                    "targets": targets,
+                    "health": health,
+                }
+            )
         return result
 
     def source(self, relative_path: str) -> ProjectSource:
