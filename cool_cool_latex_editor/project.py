@@ -174,6 +174,33 @@ class LatexProject:
     def _normalized_text(value: str) -> str:
         return re.sub(r"\s+", " ", value).strip()
 
+    @classmethod
+    def _framing_text_matches(
+        cls,
+        rendered: str,
+        quote: Optional[str],
+        prefix: Optional[str],
+        suffix: Optional[str],
+    ) -> bool:
+        normalized_quote = cls._normalized_text(quote or "")
+        if not normalized_quote:
+            return True
+        normalized_prefix = cls._normalized_text(prefix or "")
+        normalized_suffix = cls._normalized_text(suffix or "")
+        start = rendered.find(normalized_quote)
+        while start >= 0:
+            end = start + len(normalized_quote)
+            prefix_matches = not normalized_prefix or rendered[:start].rstrip().endswith(
+                normalized_prefix
+            )
+            suffix_matches = not normalized_suffix or rendered[end:].lstrip().startswith(
+                normalized_suffix
+            )
+            if prefix_matches and suffix_matches:
+                return True
+            start = rendered.find(normalized_quote, start + 1)
+        return False
+
     def framing_payloads(self) -> List[Dict[str, object]]:
         result: List[Dict[str, object]] = []
         for item in self.framings:
@@ -189,8 +216,16 @@ class LatexProject:
                             for run in project_block.block.runs
                         )
                     )
-                    quote = self._normalized_text(target.quote or "")
-                    health = "linked" if not quote or quote in rendered else "stale"
+                    health = (
+                        "linked"
+                        if self._framing_text_matches(
+                            rendered,
+                            target.quote,
+                            target.prefix,
+                            target.suffix,
+                        )
+                        else "stale"
+                    )
                 targets.append(
                     {
                         "block_id": public_id,

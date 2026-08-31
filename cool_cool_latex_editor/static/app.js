@@ -816,36 +816,68 @@ function framingRangeForOffsets(content, start, end) {
   return range;
 }
 
-function framingRangeForQuote(content, quote) {
+function framingContextMatches(text, start, end, prefix, suffix) {
+  const prefixMatches = !prefix || text.slice(0, start).trimEnd().endsWith(prefix.trim());
+  const suffixMatches = !suffix || text.slice(end).trimStart().startsWith(suffix.trim());
+  return prefixMatches && suffixMatches;
+}
+
+function framingOffsetsForQuote(text, quote, prefix = "", suffix = "") {
   if (!quote) return null;
-  const text = content.textContent || "";
   let start = text.indexOf(quote);
-  let end = start >= 0 ? start + quote.length : -1;
-  if (start < 0) {
-    let normalized = "";
-    const offsets = [];
-    let whitespace = false;
-    for (let index = 0; index < text.length; index += 1) {
-      if (/\s/.test(text[index])) {
-        if (!whitespace) {
-          normalized += " ";
-          offsets.push(index);
-          whitespace = true;
-        }
-      } else {
-        normalized += text[index];
+  while (start >= 0) {
+    const end = start + quote.length;
+    if (framingContextMatches(text, start, end, prefix, suffix)) return { start, end };
+    start = text.indexOf(quote, start + 1);
+  }
+
+  let normalized = "";
+  const offsets = [];
+  let whitespace = false;
+  for (let index = 0; index < text.length; index += 1) {
+    if (/\s/.test(text[index])) {
+      if (!whitespace) {
+        normalized += " ";
         offsets.push(index);
-        whitespace = false;
+        whitespace = true;
       }
-    }
-    const normalizedQuote = quote.replace(/\s+/g, " ").trim();
-    const normalizedStart = normalized.indexOf(normalizedQuote);
-    if (normalizedStart >= 0) {
-      start = offsets[normalizedStart];
-      end = offsets[normalizedStart + normalizedQuote.length - 1] + 1;
+    } else {
+      normalized += text[index];
+      offsets.push(index);
+      whitespace = false;
     }
   }
-  return start >= 0 && end > start ? framingRangeForOffsets(content, start, end) : null;
+  const normalizedQuote = quote.replace(/\s+/g, " ").trim();
+  const normalizedPrefix = prefix.replace(/\s+/g, " ").trim();
+  const normalizedSuffix = suffix.replace(/\s+/g, " ").trim();
+  if (!normalizedQuote) return null;
+  let normalizedStart = normalized.indexOf(normalizedQuote);
+  while (normalizedStart >= 0) {
+    const normalizedEnd = normalizedStart + normalizedQuote.length;
+    if (
+      framingContextMatches(
+        normalized,
+        normalizedStart,
+        normalizedEnd,
+        normalizedPrefix,
+        normalizedSuffix
+      )
+    ) {
+      return {
+        start: offsets[normalizedStart],
+        end: offsets[normalizedEnd - 1] + 1,
+      };
+    }
+    normalizedStart = normalized.indexOf(normalizedQuote, normalizedStart + 1);
+  }
+  return null;
+}
+
+function framingRangeForQuote(content, quote, prefix = "", suffix = "") {
+  const offsets = framingOffsetsForQuote(content.textContent || "", quote, prefix, suffix);
+  return offsets
+    ? framingRangeForOffsets(content, offsets.start, offsets.end)
+    : null;
 }
 
 function framingRoleLabel(role) {
@@ -885,7 +917,7 @@ function activateFraming(itemId, { scroll = true, advance = false } = {}) {
     : null;
   const content = row ? $(".editable-content", row) : null;
   if (content && target.health === "linked" && CSS.highlights) {
-    const range = framingRangeForQuote(content, target.quote);
+    const range = framingRangeForQuote(content, target.quote, target.prefix, target.suffix);
     if (range) CSS.highlights.set("framing-target", new Highlight(range));
   }
   if (row && scroll) {

@@ -132,7 +132,7 @@ class ServerTests(unittest.TestCase):
         included, _ = self.write_multifile_document()
         included.write_text(
             '%<text-anchor id="ta-framing-one"/>\n'
-            "\\section{Included section}\n"
+            "\\section{Before Included section between Included section After}\n"
             "\\label{sec:included}\n\n"
             "Included paragraph.\n\n"
             "\\input{figures/deep}\n",
@@ -141,11 +141,15 @@ class ServerTests(unittest.TestCase):
         records = (
             '%<editor-framing\n% id="linked"\n% section="intro"\n% role="gap"\n'
             '% status="confirmed"\n% order="10"\n%>\n% 已对应\n'
-            '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="Included section"/>\n'
+            '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="Included section" prefix="between " suffix=" After"/>\n'
             '%</editor-framing>\n'
             '%<editor-framing\n% id="stale"\n% section="intro"\n% role="method"\n'
             '% status="proposed"\n% order="20"\n% parent="linked"\n%>\n% 已变化\n'
             '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="No longer present"/>\n'
+            '%</editor-framing>\n'
+            '%<editor-framing\n% id="context-stale"\n% section="intro"\n% role="method"\n'
+            '% status="proposed"\n% order="25"\n% parent="linked"\n%>\n% 上下文已变化\n'
+            '%<editor-framing-target source="sections/one.tex" target="ta-framing-one" quote="Included section" prefix="Missing " suffix=" After"/>\n'
             '%</editor-framing>\n'
             '%<editor-framing\n% id="missing"\n% section="intro"\n% role="result"\n'
             '% status="proposed"\n% order="30"\n% parent="linked"\n%>\n% 找不到锚点\n'
@@ -162,11 +166,15 @@ class ServerTests(unittest.TestCase):
         article = self.request("/api/article")
 
         framing = {item["id"]: item for item in article["framing"]}
-        self.assertEqual(list(framing), ["linked", "stale", "missing", "placeholder"])
+        self.assertEqual(
+            list(framing),
+            ["linked", "stale", "context-stale", "missing", "placeholder"],
+        )
         self.assertEqual(framing["linked"]["targets"][0]["health"], "linked")
         self.assertEqual(framing["linked"]["targets"][0]["source_path"], "sections/one.tex")
         self.assertIn("sections/one.tex::ta-framing-one", framing["linked"]["targets"][0]["block_id"])
         self.assertEqual(framing["stale"]["targets"][0]["health"], "stale")
+        self.assertEqual(framing["context-stale"]["targets"][0]["health"], "stale")
         self.assertEqual(framing["missing"]["targets"][0]["health"], "missing")
         self.assertEqual(framing["placeholder"]["health"], "unlinked")
         self.assertEqual(framing["stale"]["parent"], "linked")
@@ -523,6 +531,7 @@ class ServerTests(unittest.TestCase):
     def test_framing_shell_is_empty_and_rendered_from_article_data(self):
         html = self.request("/")
         script = self.request("/app.js")
+        styles = self.request("/styles.css")
 
         self.assertIn(b'id="framing-rail"', html)
         self.assertIn(b'id="framing-sections"', html)
@@ -531,6 +540,13 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b'get("framing-demo")', script)
         self.assertIn(b"renderFraming", script)
         self.assertIn(b"state.article.framing", script)
+        self.assertIn(b"function framingOffsetsForQuote", script)
+        self.assertIn(
+            b"framingRangeForQuote(content, target.quote, target.prefix, target.suffix)",
+            script,
+        )
+        self.assertIn(b"@media (min-width: 1081px)", styles)
+        self.assertIn(b".framing-rail {\n    display: none;\n  }", styles)
 
     def test_article_block_api_round_trips_plain_text(self):
         article = self.request("/api/article")

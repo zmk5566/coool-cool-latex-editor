@@ -770,22 +770,21 @@ button {
 
 @media (max-width: 1080px) {
   .article-stage {
-    padding-right: 302px;
-    padding-left: 24px;
+    padding-right: 44px;
+    padding-left: 44px;
   }
 
   .framing-rail {
-    right: 16px;
-    width: 268px;
+    display: none;
   }
 
   .framing-layout-enabled .article-paper {
-    width: min(100%, 680px);
+    width: min(100%, 760px);
     transform: none;
   }
 }
 
-@media (min-width: 980px) {
+@media (min-width: 1081px) {
   .framing-layout-enabled .article-stage {
     display: grid;
     grid-template-columns: minmax(160px, 0.64fr) minmax(0, 1fr) minmax(330px, 1fr);
